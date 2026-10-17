@@ -37,7 +37,7 @@ class ASRContext(HandlerContext):
         )
         self.cache = {}
 
-        self.dump_audio = True
+        self.dump_audio = False  # BwithU: never write user audio to disk
         self.audio_dump_file = None
         if self.dump_audio:
             dump_file_path = os.path.join(DirectoryInfo.get_project_dir(),
