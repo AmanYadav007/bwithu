@@ -1,0 +1,24 @@
+# Production: BwithU behind Caddy (automatic HTTPS; WebSockets pass through).
+#   1. Point app.bwithu.live (A record) at this server.
+#   2. Put the secrets in ../.env (DASHSCOPE_API_KEY, BWITHU_ADMIN_TOKEN).
+#   3. docker compose up -d --build
+services:
+  bwithu:
+    build: ..
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      BWITHU_TRUST_PROXY: "1"
+    volumes:
+      - usage:/app/server/temp
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [bwithu]
+volumes:
+  usage:
+  caddy_data:

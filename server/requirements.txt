@@ -1,0 +1,42 @@
+# BwithU production server (CPU only). Install torch from the CPU index first:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0
+# Core engine
+av>=14.0,<16.0
+aiohttp~=3.11.12
+aiortc>=1.12.0,<2.0
+dynaconf~=3.2.7
+fastapi[standard]~=0.115.12
+fastrtc
+gradio~=5.9.1
+librosa~=0.10.2
+loguru~=0.7.3
+modelscope>=1.25.0
+numpy<=1.26.4
+opencv-python-headless>=4.9.0,<5.0
+pyaml>=25.1.0
+pydantic~=2.10.6
+pyyaml~=6.0.2
+scipy~=1.15.1
+setuptools>=69.5.1,<70
+soundfile~=0.13.1
+starlette~=0.41.3
+tqdm~=4.67.1
+typer>=0.15.1
+typing-extensions~=4.12.2
+uvicorn~=0.34.0
+python-dotenv>=1.1.0
+pillow~=11.1.0
+pyjwt==2.10.1
+opuslib>=3.0.1
+protobuf>=4.25.3,<5
+huggingface-hub>=0.23.2,<1.0
+openai>=1.72.0
+# Silero VAD
+onnxruntime~=1.20.1
+# Qwen-Omni realtime
+dashscope>=1.27.0
+# LAM audio2expression
+addict~=2.4.0
+yapf==0.40.1
+transformers==4.44.1
+termcolor~=3.0.1

@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, Optional, Union
 
 import gradio
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -77,7 +77,16 @@ def register_frontend(
     if frontend_path.exists():
         logger.info(f"Serving frontend from {frontend_path}")
         app.mount(opts.mount_path, StaticFiles(directory=frontend_path), name="static")
-        app.add_route(opts.root_route, RedirectResponse(url=opts.redirect_target))
+
+        # BwithU: serve the app at "/" itself; <base> keeps its relative asset URLs under the mount.
+        index_file = frontend_path / "index.html"
+
+        async def index(_request):
+            html = index_file.read_text(encoding="utf-8")
+            html = html.replace("<head>", f'<head><base href="{opts.mount_path.rstrip("/")}/">', 1)
+            return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+        app.add_route(opts.root_route, index)
     else:
         logger.warning(f"Frontend directory {frontend_path} does not exist")
         app.add_route(opts.root_route, RedirectResponse(url="/gradio"))

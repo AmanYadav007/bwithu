@@ -1,0 +1,4 @@
+app.bwithu.live {
+	encode gzip
+	reverse_proxy bwithu:8282
+}

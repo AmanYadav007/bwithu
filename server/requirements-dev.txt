@@ -1,0 +1,4 @@
+# Extra handlers for the local dev pipeline (config/bwithu_dev.yaml): SenseVoice ASR + Edge TTS.
+-r requirements.txt
+funasr~=1.2.3
+edge-tts>=7.0.0
