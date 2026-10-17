@@ -6,7 +6,8 @@ All limits come from env vars so they can be changed without a code deploy:
   BWITHU_MAX_CALLS        simultaneous calls (default 10)
   BWITHU_DAILY_SECONDS    free talk time per user per UTC day (default 600)
   BWITHU_MAX_CALL_SECONDS hard cap for one call (default 600)
-  BWITHU_IP_MULTIPLIER    an IP may use this many users' worth of time (default 3)
+  BWITHU_IP_MULTIPLIER    an IP may use this many users' worth of time (default 10; mobile carriers
+                          put many people behind one IP, e.g. Jio/Airtel CGNAT in India)
   BWITHU_PAUSED=1         or a file named PAUSED in the server dir: refuse new calls
   BWITHU_TRUST_PROXY=1    take the client IP from X-Forwarded-For (only behind our proxy)
 """
@@ -94,7 +95,7 @@ class CallGate:
                 return None, CLOSE_BUSY
             ip_key = f"ip:{ip}"
             id_key = f"id:{cid}" if cid else None
-            ip_left = self.daily_seconds * _env_int("BWITHU_IP_MULTIPLIER", 3) - self._used.get(ip_key, 0)
+            ip_left = self.daily_seconds * _env_int("BWITHU_IP_MULTIPLIER", 10) - self._used.get(ip_key, 0)
             id_left = self.daily_seconds - self._used.get(id_key, 0) if id_key else self.daily_seconds
             allowed = int(min(ip_left, id_left, self.max_call_seconds))
             if allowed < 15:

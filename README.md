@@ -60,7 +60,8 @@ Tests: `cd web && e2e/make-fixtures.sh` once, then `npm run e2e -- greet|questio
 | Var | Default | Meaning |
 | --- | --- | --- |
 | `BWITHU_MAX_CALLS` | 10 | Simultaneous calls; extra callers see "try again in a minute" |
-| `BWITHU_DAILY_SECONDS` | 600 | Free talk time per person per day (per browser id, 3× per IP) |
+| `BWITHU_DAILY_SECONDS` | 600 | Free talk time per person per day (per browser id) |
+| `BWITHU_IP_MULTIPLIER` | 10 | One IP may use this many people's worth of time (mobile carriers share IPs) |
 | `BWITHU_MAX_CALL_SECONDS` | 600 | Hard cap per call |
 | `BWITHU_PAUSED=1` or file `server/PAUSED` | off | Kill switch: refuse new calls |
 | `BWITHU_ADMIN_TOKEN` | unset | Enables `GET /bwithu/stats?token=…` (active calls, minutes today) |
