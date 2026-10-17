@@ -32,19 +32,15 @@ default:
       QwenOmni:
         module: llm/qwen_omni/llm_handler_qwen_omni
         model_name: "qwen3.5-omni-flash-realtime"
-        voice: "Tina"
+        voice: "Tina"  # model default
         enable_video_input: false
         enable_text_output: true
         input_audio_format: "PCM_16000HZ_MONO_16BIT"
         output_audio_format: "PCM_24000HZ_MONO_16BIT"
         enable_turn_detection: false
         enable_input_transcription: false
-        instructions: >-
-          You are a warm, witty AI companion on a live video call with the user.
-          You are an AI and say so if asked, but you speak like a close friend: natural,
-          curious, encouraging, a little playful. Keep every reply short and spoken:
-          one to three sentences, no lists, no markdown, no emoji. Ask a follow-up
-          question now and then, remember what the user told you earlier in the call,
-          and match their language and energy.
+        # Per-call instructions come from src/bwithu/persona.py (name / vibe chosen in the web app).
+        # Voice names below are unverified for qwen3.5-omni-flash; check once DASHSCOPE_API_KEY is set.
+        allowed_voices: ["Tina", "Cherry", "Ethan", "Serena"]
       LAM_Driver:
         module: avatar/lam/avatar_handler_lam_audio2expression

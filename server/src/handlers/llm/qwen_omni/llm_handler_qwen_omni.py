@@ -14,6 +14,7 @@ from dashscope.audio.qwen_omni import *
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from bwithu.persona import build_instructions, pick_voice
 from chat_engine.common.handler_base import HandlerBase, HandlerDetail, HandlerBaseInfo, HandlerDataInfo
 from chat_engine.data_models.chat_data_type import ChatDataType
 from chat_engine.contexts.handler_context import HandlerContext
@@ -29,6 +30,8 @@ class QwenOmniConfig(HandlerBaseConfigModel, BaseModel):
     url: str = Field(default=os.getenv("DASHSCOPE_REALTIME_URL", "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime"))
     # BwithU: system prompt sent as session instructions.
     instructions: Optional[str] = Field(default=None)
+    # BwithU: voices the client may pick; anything else falls back to `voice`.
+    allowed_voices: List[str] = Field(default_factory=list)
     api_key: str = Field(default=os.getenv("DASHSCOPE_API_KEY"))  # DashScope API key for authentication
     voice: str = Field(default="Chelsie")  # Voice character for audio output
     enable_video_input: bool = Field(default=False)  # Enable video input processing
@@ -554,6 +557,12 @@ class HandlerSeq2SeqQwenOmni(HandlerBase, ABC):
             handler_config = QwenOmniConfig()
             
         context = QwenOmniContext(session_context.session_info.session_id)
+        # BwithU: personalize this call from the client's (sanitized) params.
+        params = session_context.session_info.user_params or {}
+        handler_config = handler_config.model_copy(update={
+            "instructions": build_instructions(params),
+            "voice": pick_voice(params, handler_config.allowed_voices, handler_config.voice),
+        })
         context.config = handler_config
         
         context.callback = QwenOmniCallback(context)

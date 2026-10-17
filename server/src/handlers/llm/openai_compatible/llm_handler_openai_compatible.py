@@ -18,6 +18,7 @@ from chat_engine.data_models.chat_stream import StreamKey
 from chat_engine.contexts.session_context import SessionContext
 from chat_engine.data_models.runtime_data.data_bundle import DataBundle, DataBundleDefinition, DataBundleEntry
 from handlers.llm.openai_compatible.chat_history_manager import ChatHistory, HistoryMessage
+from bwithu.persona import build_instructions
 from chat_engine.data_models.chat_stream_config import ChatStreamConfig
 
 
@@ -96,7 +97,9 @@ class HandlerLLM(HandlerBase, ABC):
             handler_config = LLMConfig()
         context = LLMContext(session_context.session_info.session_id)
         context.model_name = handler_config.model_name
-        context.system_prompt = {'role': 'system', 'content': handler_config.system_prompt}
+        # BwithU: persona from the client's (sanitized) params.
+        params = session_context.session_info.user_params or {}
+        context.system_prompt = {'role': 'system', 'content': build_instructions(params)}
         context.api_key = handler_config.api_key
         context.api_url = handler_config.api_url
         context.enable_video_input = handler_config.enable_video_input

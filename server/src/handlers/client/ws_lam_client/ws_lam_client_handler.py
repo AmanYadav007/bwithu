@@ -221,7 +221,8 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
                 session_delegate = self.handler_delegate.find_session_delegate(session_id)
                 if session_delegate is None:
                     logger.info(f"Creating new session: {session_id}")
-                    session_delegate = self.handler_delegate.start_session(session_id)
+                    user_params = {k: v[:200] for k, v in list(websocket.query_params.items())[:10]}
+                    session_delegate = self.handler_delegate.start_session(session_id, user_params=user_params)
 
                 if not isinstance(session_delegate, WsLamClientSessionDelegate):
                     logger.error(f"Invalid session delegate type: {type(session_delegate)}")
