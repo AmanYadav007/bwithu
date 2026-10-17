@@ -43,6 +43,18 @@ open http://127.0.0.1:8282
 
 For UI work, `cd web && npm run dev` serves on :5173 and proxies to the server.
 
+## Browser support
+
+Chrome, Edge and Safari (macOS and iOS 15+) on desktop and mobile. Two things make Safari work:
+
+- The server sends cross-origin isolation headers (COOP/COEP), because the avatar renderer's sort worker
+  uses shared WebAssembly memory. Load nothing cross-origin (fonts are self-hosted in `web/public/fonts`).
+- `web/scripts/patch-lam-renderer.mjs` (postinstall) fixes a LinkError on iOS < 16.4 in
+  `gaussian-splat-renderer-for-lam`.
+
+Tests: `cd web && e2e/make-fixtures.sh` once, then `npm run e2e -- greet|question|interrupt`,
+`node e2e/again.test.mjs`, `node e2e/safari.test.mjs`.
+
 ## Limits and controls (env vars, no redeploy needed)
 
 | Var | Default | Meaning |
