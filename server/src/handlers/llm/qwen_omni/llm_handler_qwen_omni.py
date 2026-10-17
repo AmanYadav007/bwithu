@@ -20,6 +20,8 @@ from chat_engine.data_models.chat_data_type import ChatDataType
 from chat_engine.contexts.handler_context import HandlerContext
 from chat_engine.contexts.session_context import SessionContext
 from chat_engine.data_models.chat_data.chat_data_model import ChatData
+from chat_engine.data_models.chat_signal import ChatSignal, SignalFilterRule
+from chat_engine.data_models.chat_signal_type import ChatSignalType
 from chat_engine.data_models.chat_engine_config_data import ChatEngineConfigModel, HandlerBaseConfigModel
 from chat_engine.data_models.runtime_data.data_bundle import DataBundle, DataBundleDefinition, DataBundleEntry
 
@@ -70,6 +72,9 @@ class QwenOmniContext(HandlerContext):
         # Processing queues
         self.recv_audio_queue = queue.Queue()
         self.recv_text_queue = queue.Queue()
+        # BwithU: barge-in support. Deltas from cancelled responses are dropped.
+        self.current_response_id: Optional[str] = None
+        self.cancelled_response_ids: set = set()
         # Processing threads
         self.audio_processing_thread: Optional[threading.Thread] = None
         self.text_processing_thread: Optional[threading.Thread] = None
@@ -337,6 +342,14 @@ class QwenOmniCallback(OmniRealtimeCallback):
     def on_event(self, response: str) -> None:
         try:
             event_type = response.get('type')
+            if event_type == 'response.created':
+                self.context.current_response_id = (response.get('response') or {}).get('id')
+            response_id = response.get('response_id') or (response.get('response') or {}).get('id')
+            if response_id and response_id in self.context.cancelled_response_ids:
+                if event_type == 'response.done':
+                    self.context.cancelled_response_ids.discard(response_id)
+                    self.context.is_processing = False
+                return
             # ==================== Core Business Event Processing ====================
             # Log all events except high-frequency delta events
             if event_type not in ['response.audio.delta', 'response.audio_transcript.delta', 'response.text.delta']:
@@ -823,7 +836,9 @@ class HandlerSeq2SeqQwenOmni(HandlerBase, ABC):
         # Callback still references through context, but points directly to handler-level definitions to avoid copying
         ctx = cast(QwenOmniContext, context)
         ctx.output_definitions = self.output_definitions
-        return HandlerDetail(inputs=inputs, outputs=outputs)
+        # BwithU: hear interrupts (the engine cancels our AVATAR_AUDIO stream) so Qwen stops talking.
+        signal_filters = [SignalFilterRule(ChatSignalType.STREAM_CANCEL, None, ChatDataType.AVATAR_AUDIO)]
+        return HandlerDetail(inputs=inputs, outputs=outputs, signal_filters=signal_filters)
 
     def handle(self, context: HandlerContext, inputs: ChatData,
                output_definitions: Dict[ChatDataType, HandlerDataInfo]):
@@ -1023,6 +1038,29 @@ class HandlerSeq2SeqQwenOmni(HandlerBase, ABC):
             logger.debug("Failed to process video frame, skipping send")
 
 
+
+    def on_signal(self, context: HandlerContext, signal: ChatSignal):
+        """BwithU: the user interrupted. Stop the current Qwen response and drop what is still in flight."""
+        context = cast(QwenOmniContext, context)
+        if signal.type != ChatSignalType.STREAM_CANCEL or not context.is_processing:
+            return
+        rid = context.current_response_id
+        if rid:
+            context.cancelled_response_ids.add(rid)
+        for q in (context.recv_audio_queue, context.recv_text_queue):
+            while not q.empty():
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    break
+        context.current_speech_id = None
+        context.current_turn_audio_started = False
+        try:
+            context.conversation.cancel_response()
+        except Exception as e:
+            logger.warning(f"Qwen-Omni cancel_response failed: {e}")
+        context.is_processing = False
+        logger.info(f"Qwen-Omni response {rid} cancelled by interrupt")
 
     def destroy_context(self, context: HandlerContext):
         """

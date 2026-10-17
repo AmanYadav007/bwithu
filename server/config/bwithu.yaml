@@ -25,8 +25,8 @@ default:
         module: vad/silerovad/vad_handler_silero
         speaking_threshold: 0.3
         start_delay: 2048
-        end_delay: 5000
-        buffer_look_back: 5000
+        end_delay: 8000          # 0.5 s of silence ends the turn
+        buffer_look_back: 12000  # 0.75 s pre-roll, also recovers the start of a barge-in
         speech_padding: 512
         volume_threshold: -35
       QwenOmni:

@@ -14,6 +14,8 @@ from chat_engine.data_models.chat_engine_config_data import ChatEngineConfigMode
 from chat_engine.common.handler_base import HandlerBase, HandlerBaseInfo, HandlerDataInfo, HandlerDetail
 from chat_engine.data_models.chat_data.chat_data_model import ChatData
 from chat_engine.data_models.chat_data_type import ChatDataType
+from chat_engine.data_models.chat_signal import ChatSignal, SignalFilterRule
+from chat_engine.data_models.chat_signal_type import ChatSignalType
 from chat_engine.contexts.session_context import SessionContext
 from chat_engine.data_models.runtime_data.data_bundle import DataBundle, DataBundleDefinition, DataBundleEntry
 from engine_utils.directory_info import DirectoryInfo
@@ -33,6 +35,8 @@ class TTSContext(HandlerContext):
         self.input_text = ''
         self.dump_audio = False
         self.audio_dump_file = None
+        # BwithU: text streams cancelled by an interrupt; their remaining sentences are not spoken.
+        self.cancelled_keys = set()
 
 
 class HandlerTTS(HandlerBase, ABC):
@@ -68,6 +72,7 @@ class HandlerTTS(HandlerBase, ABC):
         }
         return HandlerDetail(
             inputs=inputs, outputs=outputs,
+            signal_filters=[SignalFilterRule(ChatSignalType.STREAM_CANCEL, None, ChatDataType.AVATAR_TEXT)],
         )
 
     def load(self, engine_config: ChatEngineConfigModel, handler_config: Optional[BaseModel] = None):
@@ -106,6 +111,10 @@ class HandlerTTS(HandlerBase, ABC):
             text = inputs.data.get_main_data()
         else:
             return
+        stream_key = inputs.stream_id.stream_key_str if inputs.stream_id else None
+        if stream_key in context.cancelled_keys:
+            context.input_text = ''
+            return
         if text is not None:
             text = re.sub(r"<\|.*?\|>", "", text)
             context.input_text += self.filter_text(text)
@@ -131,6 +140,9 @@ class HandlerTTS(HandlerBase, ABC):
                             # tts_audio = chunk['data']
                             data += chunk['data']
                     
+                    if stream_key in context.cancelled_keys:  # interrupted while synthesizing
+                        context.input_text = ''
+                        return
                     output_audio = librosa.load(io.BytesIO(data), sr=None)[0]
                     output_audio = output_audio[np.newaxis, ...]
                     output = DataBundle(output_definition)
@@ -156,6 +168,12 @@ class HandlerTTS(HandlerBase, ABC):
             output.set_main_data(np.zeros(shape=(1, 240), dtype=np.float32))
             context.submit_data(output, finish_stream=True)
             logger.info(f"speech end")
+
+    def on_signal(self, context: HandlerContext, signal: ChatSignal):
+        context = cast(TTSContext, context)
+        if signal.type == ChatSignalType.STREAM_CANCEL and signal.related_stream:
+            context.cancelled_keys.add(signal.related_stream.stream_key_str)
+            context.input_text = ''
 
     def destroy_context(self, context: HandlerContext):
         context = cast(TTSContext, context)

@@ -431,8 +431,9 @@ class HandlerAudioVAD(HandlerBase, ABC):
         output_definition = output_definitions.get(ChatDataType.HUMAN_AUDIO).definition
         
         # POST_END 状态下需要继续处理音频进行监控，不受播放状态限制
-        if not context.input_enabled and context.speaking_status != SpeakingStatus.POST_END:
-            return
+        # BwithU: while the avatar talks, VAD is paused but we still keep the look-back history, so a
+        # user who barges in is heard from their first word once the interrupt re-enables VAD.
+        input_paused = not context.input_enabled and context.speaking_status != SpeakingStatus.POST_END
         if inputs.type != ChatDataType.MIC_AUDIO:
             return
 
@@ -462,6 +463,9 @@ class HandlerAudioVAD(HandlerBase, ABC):
             if db > context.peak_volume:
                 context.peak_volume = db
             head_sample_id = context.slice_context.get_last_slice_start_index()
+            if input_paused:
+                context._append_to_history(clip, head_sample_id)
+                continue
             speech_prob = self._inference(context, clip)
             if (context.speaking_status in (SpeakingStatus.END, SpeakingStatus.POST_END)
                 and db < context.config.volume_threshold):

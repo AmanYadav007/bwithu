@@ -29,6 +29,19 @@ const rt: Runtime = { ws: null, avatar: null, stream: null, audioContext: null, 
 
 let serverConfig: { wsRoute: string; assetRoute: string } | null = null
 
+// Voice barge-in: the user talking over the avatar for ~0.3 s stops it. Echo of the avatar's own
+// voice is removed by the browser's echo canceller, so a sustained level above this is the user.
+const BARGE_IN_DB = -33
+const BARGE_IN_MS = 300
+const barge = { speechMs: 0, cooldownUntil: 0 }
+
+function levelDb(pcm: Int16Array): number {
+  let sum = 0
+  for (let i = 0; i < pcm.length; i++) sum += pcm[i] * pcm[i]
+  const rms = Math.sqrt(sum / Math.max(1, pcm.length)) / 32768
+  return 20 * Math.log10(rms + 1e-9)
+}
+
 // Close codes sent by server/src/bwithu/gate.py.
 const REFUSALS: Record<number, string> = {
   4001: 'Lots of people are calling right now. Please try again in a minute.',
@@ -74,6 +87,7 @@ export const useCallStore = defineStore('call', {
     endReason: '' as '' | 'user' | 'limit' | 'dropped',
     error: '',
     avatarCaption: null as Caption | null,
+    interruptedAt: 0,
     humanCaption: null as Caption | null,
   }),
   getters: {
@@ -163,7 +177,22 @@ export const useCallStore = defineStore('call', {
     },
 
     interrupt() {
-      rt.avatar?.interrupt()
+      if (!rt.avatar || !this.avatarSpeaking) return
+      rt.avatar.interrupt()
+      this.interruptedAt = Date.now()
+      this.avatarSpeaking = false
+      barge.speechMs = 0
+      barge.cooldownUntil = performance.now() + 1500
+    },
+
+    _detectBargeIn(pcm: Int16Array) {
+      if (!this.avatarSpeaking || performance.now() < barge.cooldownUntil) {
+        barge.speechMs = 0
+        return
+      }
+      const ms = (pcm.length / 16000) * 1000
+      barge.speechMs = levelDb(pcm) > BARGE_IN_DB ? barge.speechMs + ms : Math.max(0, barge.speechMs - ms / 2)
+      if (barge.speechMs >= BARGE_IN_MS) this.interrupt()
     },
 
     _onText(role: 'human' | 'avatar', payload?: TextPayload) {
@@ -184,6 +213,7 @@ export const useCallStore = defineStore('call', {
       const source = ctx.createMediaStreamSource(rt.stream)
       const send = (pcm: Int16Array) => {
         if (this.micMuted || rt.ws?.engine?.readyState !== WebSocket.OPEN) return
+        this._detectBargeIn(pcm)
         rt.avatar?.sendAudio(pcm, 'base64')
       }
       try {

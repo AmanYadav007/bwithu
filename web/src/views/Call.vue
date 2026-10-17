@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import Logo from '@/components/Logo.vue'
 import { AVATARS } from '@/config/companion'
@@ -14,6 +14,37 @@ const { companion } = storeToRefs(useCompanionStore())
 const stage = ref<HTMLDivElement>()
 
 const preview = computed(() => AVATARS.find((a) => a.id === companion.value.avatar)?.preview)
+
+// Reveal the reply at roughly speaking pace so captions follow the voice instead of running ahead.
+const CHARS_PER_SECOND = 16
+const shownChars = ref(0)
+let captionTimer: number | undefined
+watch(
+  () => call.avatarCaption?.key,
+  () => (shownChars.value = 0)
+)
+watch(
+  () => call.avatarSpeaking,
+  (speaking) => {
+    clearInterval(captionTimer)
+    if (speaking) captionTimer = window.setInterval(() => (shownChars.value += 1), 1000 / CHARS_PER_SECOND)
+    // Interrupted: drop the unspoken rest. Finished: show the whole reply.
+    else if (Date.now() - call.interruptedAt < 1000) shownChars.value = 0
+    else if (call.avatarCaption) shownChars.value = call.avatarCaption.text.length
+  }
+)
+const caption = computed(() => {
+  const text = call.avatarCaption?.text ?? ''
+  if (!text || shownChars.value === 0) return ''
+  // Show the tail of what has been said so far, cut at a word boundary.
+  const said = text.slice(0, shownChars.value)
+  const tail = said.length > 140 ? said.slice(said.indexOf(' ', said.length - 140) + 1) : said
+  return tail
+})
+
+function onFrameTap() {
+  if (call.avatarSpeaking) call.interrupt()
+}
 const ready = computed(() => call.status === 'live' && call.loadPercent >= 100)
 
 const statusText = computed(() => {
@@ -44,7 +75,10 @@ function editCompanion() {
   emit('edit')
 }
 
-onBeforeUnmount(() => call.reset())
+onBeforeUnmount(() => {
+  clearInterval(captionTimer)
+  call.reset()
+})
 </script>
 
 <template>
@@ -57,7 +91,12 @@ onBeforeUnmount(() => call.reset())
       <span v-else class="timer" :class="{ warn: call.secondsLeft <= 60 }">{{ clock }}</span>
     </header>
 
-    <div class="frame" :class="{ live: call.status === 'live', speaking: call.avatarSpeaking }">
+    <div
+      class="frame"
+      :class="{ live: call.status === 'live', speaking: call.avatarSpeaking }"
+      :title="call.avatarSpeaking ? 'Tap to interrupt' : undefined"
+      @click="onFrameTap"
+    >
       <div ref="stage" class="stage" :class="{ visible: ready }" />
 
       <!-- Before / after the call: portrait + one big action -->
@@ -96,9 +135,7 @@ onBeforeUnmount(() => call.reset())
           <span class="status">{{ statusText }}</span>
         </div>
         <Transition name="caption">
-          <p v-if="call.avatarCaption" :key="call.avatarCaption.key" class="caption">
-            {{ call.avatarCaption.text }}
-          </p>
+          <p v-if="caption" :key="call.avatarCaption?.key" class="caption">{{ caption }}</p>
         </Transition>
       </template>
     </div>
