@@ -125,6 +125,10 @@ onBeforeUnmount(() => {
               Start call
             </button>
           </template>
+          <template v-else-if="call.micPending">
+            <h2>Allow your microphone</h2>
+            <p>{{ companion.name }} needs to hear you. Tap "Allow" when your browser asks.</p>
+          </template>
           <template v-else-if="call.status === 'connecting' || call.status === 'live'">
             <div class="ring" :style="{ '--p': call.loadPercent }"><span>{{ call.loadPercent }}%</span></div>
             <p>Waking {{ companion.name }} up…</p>

@@ -89,6 +89,7 @@ export const useCallStore = defineStore('call', {
     avatarState: TYVoiceChatState.Idle,
     avatarSpeaking: false,
     loadPercent: 0,
+    micPending: false,
     micMuted: false,
     speakerMuted: false,
     seconds: 0,
@@ -111,12 +112,13 @@ export const useCallStore = defineStore('call', {
       callStartedAt = performance.now()
       this.status = 'connecting'
       try {
+        this.micPending = true
         const [{ wsRoute, assetRoute }, stream] = await Promise.all([
           loadServerConfig(),
           navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
           }),
-        ])
+        ]).finally(() => (this.micPending = false))
         if (gen !== generation) {
           // The user left or hung up while the permission prompt was open.
           stream.getTracks().forEach((t) => t.stop())

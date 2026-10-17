@@ -74,6 +74,16 @@ def register_frontend(
         config = _materialize_init_config(init_config)
         return JSONResponse(status_code=200, content=config)
 
+    @app.middleware("http")
+    async def cross_origin_isolation(request, call_next):
+        # BwithU: the 3D avatar's sorter uses shared WebAssembly memory, which Safari/WebKit only
+        # allows on cross-origin isolated pages. Everything we load is same-origin.
+        response = await call_next(request)
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+        return response
+
     if frontend_path.exists():
         logger.info(f"Serving frontend from {frontend_path}")
         app.mount(opts.mount_path, StaticFiles(directory=frontend_path), name="static")
