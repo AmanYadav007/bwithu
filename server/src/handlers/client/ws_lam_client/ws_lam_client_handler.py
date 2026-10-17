@@ -18,7 +18,7 @@ import re
 from typing import Any, Dict, Literal, Optional, cast
 
 import gradio
-from fastapi import FastAPI, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -37,6 +37,7 @@ from chat_engine.data_models.engine_channel_type import EngineChannelType
 from chat_engine.data_models.runtime_data.data_bundle import (
     DataBundleDefinition, DataBundleEntry, VariableSize,
 )
+from bwithu import feedback
 from bwithu.gate import CLOSE_CALL_LIMIT, CLOSE_DAILY_LIMIT, gate
 from engine_utils.directory_info import DirectoryInfo
 from service.frontend_service import register_frontend
@@ -274,12 +275,30 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
                 except Exception:
                     pass
 
+        def is_admin(token: str) -> bool:
+            expected = os.getenv("BWITHU_ADMIN_TOKEN", "")
+            return bool(expected) and token == expected
+
         @app.get("/bwithu/stats")
         async def bwithu_stats(token: str = ""):
-            expected = os.getenv("BWITHU_ADMIN_TOKEN", "")
-            if not expected or token != expected:
+            if not is_admin(token):
                 return JSONResponse(status_code=404, content={"detail": "Not Found"})
             return gate.stats()
+
+        @app.post("/bwithu/feedback")
+        async def bwithu_feedback_post(request: Request):
+            try:
+                body = await request.json()
+            except Exception:
+                return JSONResponse(status_code=400, content={"ok": False})
+            ok = isinstance(body, dict) and feedback.save(body)
+            return JSONResponse(status_code=200 if ok else 400, content={"ok": ok})
+
+        @app.get("/bwithu/feedback")
+        async def bwithu_feedback_get(token: str = ""):
+            if not is_admin(token):
+                return JSONResponse(status_code=404, content={"detail": "Not Found"})
+            return feedback.latest()
 
     def _register_asset_route(self, app: FastAPI):
         asset_route = self.asset_route

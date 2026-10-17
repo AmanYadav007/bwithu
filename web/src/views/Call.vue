@@ -2,6 +2,7 @@
 import { storeToRefs } from 'pinia'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
+import Feedback from '@/components/Feedback.vue'
 import Logo from '@/components/Logo.vue'
 import { AVATARS } from '@/config/companion'
 import { TYVoiceChatState } from '@/interface/voiceChat'
@@ -66,6 +67,19 @@ const endedText = computed(() => {
   return `Call with ${companion.value.name} ended.`
 })
 
+// Remember the finished call's length for feedback (start() resets the store).
+const lastCallSeconds = ref(0)
+const callCount = ref(0)
+watch(
+  () => call.status,
+  (status) => {
+    if (status === 'ended') {
+      lastCallSeconds.value = call.seconds
+      callCount.value++
+    }
+  }
+)
+
 function start() {
   if (stage.value) call.start(stage.value, companion.value)
 }
@@ -118,6 +132,7 @@ onBeforeUnmount(() => {
           <template v-else-if="call.status === 'ended'">
             <h2>{{ endedText }}</h2>
             <button class="btn-primary" @click="start">Call again</button>
+            <Feedback v-if="lastCallSeconds >= 10" :key="callCount" :companion="companion" :seconds="lastCallSeconds" />
           </template>
           <template v-else-if="call.status === 'error'">
             <h2>Couldn't start the call</h2>
