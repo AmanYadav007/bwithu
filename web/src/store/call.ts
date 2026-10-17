@@ -38,6 +38,7 @@ const barge = { speechMs: 0, cooldownUntil: 0 }
 // Must match GREETING_CUE in server/src/bwithu/persona.py.
 const GREETING_CUE = '[call connected]'
 let greeted = false
+let callStartedAt = 0
 
 function levelDb(pcm: Int16Array): number {
   let sum = 0
@@ -101,6 +102,7 @@ export const useCallStore = defineStore('call', {
     async start(container: HTMLDivElement, companion: Companion) {
       if (this.status === 'connecting' || this.status === 'live') return
       this.$reset()
+      callStartedAt = performance.now()
       this.status = 'connecting'
       try {
         const [{ wsRoute, assetRoute }, stream] = await Promise.all([
@@ -198,6 +200,7 @@ export const useCallStore = defineStore('call', {
     _maybeGreet() {
       if (greeted || this.status !== 'live' || this.loadPercent < 100 || !rt.avatar) return
       greeted = true
+      console.info(`[bwithu] face ready ${Math.round(performance.now() - callStartedAt)} ms after Start call`)
       rt.avatar.sendSpeech(GREETING_CUE)
     },
 
