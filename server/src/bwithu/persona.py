@@ -27,6 +27,14 @@ BASE_PROMPT = (
     "financial advice beyond general information."
 )
 
+# Sent by the web app once the avatar is on screen, so the companion speaks first like a real call.
+GREETING_CUE = "[call connected]"
+GREETING_RULE = (
+    "If the user's message is exactly " + GREETING_CUE + ", the call just started: greet {user} warmly "
+    "in one short sentence, like picking up a video call, and ask how they are."
+)
+GREETING_INSTRUCTION = "The call just connected. Greet {user} warmly in one short sentence and ask how they are."
+
 _SAFE_TEXT = re.compile(r"[^\w .'\-]", re.UNICODE)
 
 
@@ -41,7 +49,13 @@ def build_instructions(params: Dict[str, str]) -> str:
     name = clean_name(params.get("name"), DEFAULT_NAME)
     user = clean_name(params.get("user"), "the user")
     vibe = VIBES.get(params.get("vibe", ""), VIBES[DEFAULT_VIBE])
-    return BASE_PROMPT.format(name=name, user=user, vibe=vibe)
+    return BASE_PROMPT.format(name=name, user=user, vibe=vibe) + " " + GREETING_RULE.format(user=user)
+
+
+def build_greeting_instructions(params: Dict[str, str]) -> str:
+    """Full instructions for the companion's first, unprompted line (Qwen-Omni response.create)."""
+    user = clean_name(params.get("user"), "the user")
+    return build_instructions(params) + " " + GREETING_INSTRUCTION.format(user=user)
 
 
 def pick_voice(params: Dict[str, str], allowed: List[str], default: str) -> str:

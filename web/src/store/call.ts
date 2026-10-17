@@ -35,6 +35,10 @@ const BARGE_IN_DB = -33
 const BARGE_IN_MS = 300
 const barge = { speechMs: 0, cooldownUntil: 0 }
 
+// Must match GREETING_CUE in server/src/bwithu/persona.py.
+const GREETING_CUE = '[call connected]'
+let greeted = false
+
 function levelDb(pcm: Int16Array): number {
   let sum = 0
   for (let i = 0; i < pcm.length; i++) sum += pcm[i] * pcm[i]
@@ -115,10 +119,12 @@ export const useCallStore = defineStore('call', {
           cid: clientId(),
         })
         rt.ws = markRaw(ws)
+        greeted = false
         ws.on(WsEventTypes.WS_OPEN, () => {
           this.status = 'live'
           this._startMic()
           this._startTimer()
+          this._maybeGreet()
         })
         ws.on(WsEventTypes.WS_CLOSE, (code?: number) => {
           // Refusals arrive right after the socket opens, so they win over the 'live' state.
@@ -137,7 +143,10 @@ export const useCallStore = defineStore('call', {
           rendererType: 'lam',
           // The renderer reports progress as a 0..1 fraction: download is the first 60%, scene load the rest.
           downloadProgress: (p) => (this.loadPercent = Math.round(p * 60)),
-          loadProgress: (p) => (this.loadPercent = 60 + Math.round(p * 40)),
+          loadProgress: (p) => {
+            this.loadPercent = 60 + Math.round(p * 40)
+            this._maybeGreet()
+          },
         })
         rt.avatar = markRaw(avatar)
         avatar.on(EventTypes.StateChanged, (state: TYVoiceChatState) => (this.avatarState = state))
@@ -185,6 +194,13 @@ export const useCallStore = defineStore('call', {
       barge.cooldownUntil = performance.now() + 1500
     },
 
+    // Once the face is on screen and the line is open, the companion says hello first.
+    _maybeGreet() {
+      if (greeted || this.status !== 'live' || this.loadPercent < 100 || !rt.avatar) return
+      greeted = true
+      rt.avatar.sendSpeech(GREETING_CUE)
+    },
+
     _detectBargeIn(pcm: Int16Array) {
       if (!this.avatarSpeaking || performance.now() < barge.cooldownUntil) {
         barge.speechMs = 0
@@ -196,7 +212,7 @@ export const useCallStore = defineStore('call', {
     },
 
     _onText(role: 'human' | 'avatar', payload?: TextPayload) {
-      if (!payload || typeof payload.text !== 'string') return
+      if (!payload || typeof payload.text !== 'string' || payload.text === GREETING_CUE) return
       const key = payload.stream_key || payload.request_id
       const current = role === 'human' ? this.humanCaption : this.avatarCaption
       const text =

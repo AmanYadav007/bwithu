@@ -14,7 +14,7 @@ from dashscope.audio.qwen_omni import *
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from bwithu.persona import build_instructions, pick_voice
+from bwithu.persona import GREETING_CUE, build_greeting_instructions, build_instructions, pick_voice
 from chat_engine.common.handler_base import HandlerBase, HandlerDetail, HandlerBaseInfo, HandlerDataInfo
 from chat_engine.data_models.chat_data_type import ChatDataType
 from chat_engine.contexts.handler_context import HandlerContext
@@ -74,6 +74,7 @@ class QwenOmniContext(HandlerContext):
         self.recv_text_queue = queue.Queue()
         # BwithU: barge-in support. Deltas from cancelled responses are dropped.
         self.current_response_id: Optional[str] = None
+        self.greeting_instructions: Optional[str] = None
         self.cancelled_response_ids: set = set()
         # Processing threads
         self.audio_processing_thread: Optional[threading.Thread] = None
@@ -572,6 +573,7 @@ class HandlerSeq2SeqQwenOmni(HandlerBase, ABC):
         context = QwenOmniContext(session_context.session_info.session_id)
         # BwithU: personalize this call from the client's (sanitized) params.
         params = session_context.session_info.user_params or {}
+        context.greeting_instructions = build_greeting_instructions(params)
         handler_config = handler_config.model_copy(update={
             "instructions": build_instructions(params),
             "voice": pick_voice(params, handler_config.allowed_voices, handler_config.voice),
@@ -816,6 +818,10 @@ class HandlerSeq2SeqQwenOmni(HandlerBase, ABC):
             ChatDataType.CAMERA_VIDEO: HandlerDataInfo(
                 type=ChatDataType.CAMERA_VIDEO,
             ),
+            # BwithU: only used for the greeting cue sent when the call connects.
+            ChatDataType.HUMAN_TEXT: HandlerDataInfo(
+                type=ChatDataType.HUMAN_TEXT,
+            ),
         }
 
         outputs = {
@@ -848,6 +854,21 @@ class HandlerSeq2SeqQwenOmni(HandlerBase, ABC):
             self._handle_audio_input(context, inputs)
         elif inputs.type == ChatDataType.CAMERA_VIDEO and context.config.enable_video_input:
             self._handle_video_input(context, inputs)
+        elif inputs.type == ChatDataType.HUMAN_TEXT:
+            self._handle_greeting(context, inputs)
+
+    def _handle_greeting(self, context: QwenOmniContext, inputs: ChatData):
+        """BwithU: the web app sends GREETING_CUE when the avatar appears; the companion speaks first."""
+        text = inputs.data.get_main_data()
+        if (text or "").strip() != GREETING_CUE or context.is_processing or not context.greeting_instructions:
+            return
+        context.current_speech_id = inputs.stream_id.stream_key_str if inputs.stream_id else context.session_id
+        try:
+            context.conversation.create_response(instructions=context.greeting_instructions)
+            context.is_processing = True
+        except Exception as e:
+            logger.opt(exception=True).error(f"Failed to create greeting response: {e}")
+            context.current_speech_id = None
         
 
 
