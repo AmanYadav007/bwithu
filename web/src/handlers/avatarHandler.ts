@@ -44,6 +44,7 @@ export class AvatarHandler extends EventEmitter {
   private _heartbeatWorker?: Worker
   private _currentStreamKey?: string
   curState = TYVoiceChatState.Idle
+  private _exited = false
   constructor(options: AvatarHandlerOptions) {
     const { container, assetsPath, ws, downloadProgress, loadProgress, rendererType } = options
     super()
@@ -107,7 +108,10 @@ export class AvatarHandler extends EventEmitter {
         downloadProgress: this._downloadProgress.bind(this),
         loadProgress: this._loadProgress.bind(this),
       })
-      this._renderer = await lamRenderer.getInstance()
+      const renderer = await lamRenderer.getInstance()
+      // BwithU: the call may have ended while the avatar was still loading.
+      if (this._exited) renderer?.dispose?.()
+      else this._renderer = renderer
     } else {
       this._renderer = null
     }
@@ -168,6 +172,7 @@ export class AvatarHandler extends EventEmitter {
     })
   }
   exit(): void {
+    this._exited = true
     this._stopHeartbeat()
     this._renderer?.dispose?.()
     this.curState = TYVoiceChatState.Idle

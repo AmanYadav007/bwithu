@@ -171,7 +171,8 @@ export class Processor {
         }
       })
       const samples = player.samplesList[lastIndex]
-      const subOffsetTime = offsetTime - samples.startTime! * 1000
+      // BwithU: relative to the first sample, so a shared (long-running) AudioContext keeps lips in sync.
+      const subOffsetTime = offsetTime - (samples.startTime! - firstSampleStartTime!) * 1000
       const offset = Math.floor((subOffsetTime / 1000) * this._arkit_face_sample_rate)
       const arkitFaceFloat32ArrayArray = new Float32Array(arkitFaceArrayBufferArray[lastIndex])
       const subData = arkitFaceFloat32ArrayArray?.slice(
@@ -224,7 +225,8 @@ export class Processor {
         }
       })
       const samples = player.samplesList[lastIndex]
-      const subOffsetTime = offsetTime - samples.startTime! * 1000
+      // BwithU: relative to the first sample, so a shared (long-running) AudioContext keeps lips in sync.
+      const subOffsetTime = offsetTime - (samples.startTime! - firstSampleStartTime!) * 1000
       const offset = Math.floor((subOffsetTime / 1000) * this._tts2face_sample_rate)
       const arkitFaceFloat32ArrayArray = new Float32Array(tts2faceArrayBufferArray[lastIndex])
       const subData = arkitFaceFloat32ArrayArray?.slice(

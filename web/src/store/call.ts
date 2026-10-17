@@ -4,6 +4,7 @@ import { markRaw } from 'vue'
 import { createWS, initConfig, makeURL } from '@/apis'
 import { MAX_CALL_SECONDS, type Companion } from '@/config/companion'
 import { AvatarHandler } from '@/handlers/avatarHandler'
+import { getAudioContext, unlockAudio } from '@/helpers/audioContext'
 import type { WS } from '@/helpers/ws'
 import { EventTypes, WsEventTypes, type SignalBody, type TextPayload } from '@/interface/eventType'
 import { TYVoiceChatState } from '@/interface/voiceChat'
@@ -19,13 +20,15 @@ interface Runtime {
   ws: WS | null
   avatar: AvatarHandler | null
   stream: MediaStream | null
-  audioContext: AudioContext | null
+  micSource: AudioNode | null
   micNode: AudioNode | null
   timer: number | null
 }
 
 // Non-reactive handles for the live call; kept outside Pinia state on purpose.
-const rt: Runtime = { ws: null, avatar: null, stream: null, audioContext: null, micNode: null, timer: null }
+const rt: Runtime = { ws: null, avatar: null, stream: null, micSource: null, micNode: null, timer: null }
+// Bumped on every start/teardown so async steps from an older call can tell they are stale.
+let generation = 0
 
 let serverConfig: { wsRoute: string; assetRoute: string } | null = null
 
@@ -101,7 +104,10 @@ export const useCallStore = defineStore('call', {
   actions: {
     async start(container: HTMLDivElement, companion: Companion) {
       if (this.status === 'connecting' || this.status === 'live') return
+      // Must run synchronously inside the tap, before any await (iOS Safari audio policy).
+      unlockAudio()
       this.$reset()
+      const gen = ++generation
       callStartedAt = performance.now()
       this.status = 'connecting'
       try {
@@ -111,6 +117,11 @@ export const useCallStore = defineStore('call', {
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
           }),
         ])
+        if (gen !== generation) {
+          // The user left or hung up while the permission prompt was open.
+          stream.getTracks().forEach((t) => t.stop())
+          return
+        }
         rt.stream = stream
 
         const ws = createWS(wsRoute, crypto.randomUUID(), {
@@ -227,9 +238,10 @@ export const useCallStore = defineStore('call', {
 
     async _startMic() {
       if (!rt.stream || !rt.avatar) return
-      const ctx = new AudioContext()
-      rt.audioContext = ctx
+      const gen = generation
+      const ctx = getAudioContext()
       const source = ctx.createMediaStreamSource(rt.stream)
+      rt.micSource = source
       const send = (pcm: Int16Array) => {
         if (this.micMuted || rt.ws?.engine?.readyState !== WebSocket.OPEN) return
         this._detectBargeIn(pcm)
@@ -238,14 +250,14 @@ export const useCallStore = defineStore('call', {
       try {
         // Served from public/ as a real file: Safari rejects data: URLs for worklets.
         await ctx.audioWorklet.addModule(new URL('worklets/mic-processor.js', document.baseURI).href)
-        if (rt.audioContext !== ctx) return // call ended while the worklet was loading
+        if (gen !== generation) return // call ended while the worklet was loading
         const node = new AudioWorkletNode(ctx, 'mic-processor', { processorOptions: { targetSampleRate: 16000 } })
         node.port.onmessage = ({ data }) => data?.pcm && send(new Int16Array(data.pcm))
         source.connect(node)
         node.connect(ctx.destination)
         rt.micNode = node
       } catch (e) {
-        if (rt.audioContext !== ctx) return
+        if (gen !== generation) return
         console.warn('[call] AudioWorklet unavailable', e)
         this._fail('Your browser cannot stream audio. Please use the latest Chrome, Edge or Safari.')
       }
@@ -260,12 +272,13 @@ export const useCallStore = defineStore('call', {
     },
 
     _teardown() {
+      generation++
       if (rt.timer) clearInterval(rt.timer)
+      rt.micSource?.disconnect()
       rt.micNode?.disconnect()
-      if (rt.audioContext && rt.audioContext.state !== 'closed') rt.audioContext.close()
       rt.stream?.getTracks().forEach((t) => t.stop())
       const { avatar, ws } = rt
-      Object.assign(rt, { ws: null, avatar: null, stream: null, audioContext: null, micNode: null, timer: null })
+      Object.assign(rt, { ws: null, avatar: null, stream: null, micSource: null, micNode: null, timer: null })
       if (avatar) {
         avatar.removeAllListeners()
         avatar.exit()

@@ -16,3 +16,4 @@ server/dump_*.pcm
 server/exp/
 web/e2e/fixtures/
 web/e2e/last-*.png
+web/e2e/lips-*.png

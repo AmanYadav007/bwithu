@@ -2,6 +2,7 @@ import type EventEmitter from 'eventemitter3'
 import { nanoid } from 'nanoid'
 
 import { PlayerEventTypes } from '../interface/eventType'
+import { getAudioContext } from './audioContext'
 interface IOption {
   // 传入的数据是采用多少位编码，默认16位
   channels: number
@@ -54,6 +55,7 @@ export class Player {
     isMute: false,
   }
   samplesList: ISamples[] = []
+  sources: AudioBufferSourceNode[] = []
 
   startTime?: number
   typedArray?: typeof Int8Array | typeof Int16Array | typeof Int32Array | typeof Float32Array
@@ -70,8 +72,18 @@ export class Player {
     await this.audioCtx!.resume()
   }
   destroy() {
+    // BwithU: the AudioContext is shared, so silence this player instead of closing the context.
     this.samplesList = []
-    this.audioCtx?.close()
+    this.sources.forEach((src) => {
+      try {
+        src.onended = null
+        src.stop()
+      } catch {
+        // already stopped
+      }
+    })
+    this.sources = []
+    this.gainNode?.disconnect()
     this.audioCtx = undefined
   }
   feed(audioOptions: {
@@ -150,6 +162,7 @@ export class Player {
     this.bufferSource.connect(this.gainNode!)
     this.bufferSource.connect(this.analyserNode!) // bufferSource连接到analyser
     this.bufferSource.start(this.startTime)
+    this.sources.push(this.bufferSource)
     samples.startTime = this.startTime
     if (this._firstStartAbsoluteTime === undefined) {
       this._firstStartAbsoluteTime = Date.now()
@@ -168,8 +181,7 @@ export class Player {
   }
   initAudioContext() {
     // 初始化音频上下文的东西
-    // @ts-ignore webkitAudioContext
-    this.audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+    this.audioCtx = getAudioContext()
     // 控制音量的 GainNode
     // https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/createGain
     this.gainNode = this.audioCtx.createGain()
