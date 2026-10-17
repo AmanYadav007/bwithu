@@ -1,0 +1,47 @@
+# Dev pipeline when no Qwen key is available: local ASR + any OpenAI-compatible LLM + free Edge TTS.
+# Set LLM_API_KEY / LLM_API_URL / LLM_MODEL in the root .env (e.g. xAI or Qwen compatible-mode).
+default:
+  logger:
+    log_level: "INFO"
+  service:
+    host: "127.0.0.1"
+    port: 8282
+  chat_engine:
+    model_root: "models"
+    concurrent_limit: 5
+    handler_search_path:
+      - "src/handlers"
+    handler_configs:
+      LamClient:
+        module: client/ws_lam_client/ws_lam_client_handler
+        asset_path: "lam_samples/james.zip"
+        connection_ttl: 900
+        upstream_mode: 'ws'
+      InterruptHandler:
+        module: logic/interrupt/interrupt_handler
+      SileroVad:
+        module: vad/silerovad/vad_handler_silero
+        speaking_threshold: 0.3
+        start_delay: 2048
+        end_delay: 5000
+        buffer_look_back: 5000
+        speech_padding: 512
+        volume_threshold: -35
+      SenseVoice:
+        enabled: True
+        module: asr/sensevoice/asr_handler_sensevoice
+        model_name: "iic/SenseVoiceSmall"
+      Edge_TTS:
+        enabled: True
+        module: tts/edgetts/tts_handler_edgetts
+        voice: "en-US-AvaMultilingualNeural"
+      LLMOpenAICompatible:
+        enabled: True
+        module: llm/openai_compatible/llm_handler_openai_compatible
+        enable_video_input: False
+        history_length: 20
+        system_prompt: >-
+          You are a warm, witty AI companion on a live video call. Speak naturally in one
+          to three short sentences. Never use lists, markdown or emoji.
+      LAM_Driver:
+        module: avatar/lam/avatar_handler_lam_audio2expression

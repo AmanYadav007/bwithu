@@ -1,0 +1,50 @@
+# BwithU production pipeline:
+#   browser mic --WS--> Silero VAD --> Qwen-Omni realtime (hears, thinks, speaks)
+#   --> LAM audio2expression (lip/face motion) --WS--> browser renders 3D head.
+# No GPU, no WebRTC/TURN. Needs DASHSCOPE_API_KEY.
+default:
+  logger:
+    log_level: "INFO"
+  service:
+    host: "0.0.0.0"
+    port: 8282
+  chat_engine:
+    model_root: "models"
+    concurrent_limit: 10
+    handler_search_path:
+      - "src/handlers"
+    handler_configs:
+      LamClient:
+        module: client/ws_lam_client/ws_lam_client_handler
+        asset_path: "lam_samples/james.zip"
+        connection_ttl: 900
+        upstream_mode: 'ws'
+      InterruptHandler:
+        module: logic/interrupt/interrupt_handler
+      SileroVad:
+        module: vad/silerovad/vad_handler_silero
+        speaking_threshold: 0.3
+        start_delay: 2048
+        end_delay: 5000
+        buffer_look_back: 5000
+        speech_padding: 512
+        volume_threshold: -35
+      QwenOmni:
+        module: llm/qwen_omni/llm_handler_qwen_omni
+        model_name: "qwen3.5-omni-flash-realtime"
+        voice: "Tina"
+        enable_video_input: false
+        enable_text_output: true
+        input_audio_format: "PCM_16000HZ_MONO_16BIT"
+        output_audio_format: "PCM_24000HZ_MONO_16BIT"
+        enable_turn_detection: false
+        enable_input_transcription: false
+        instructions: >-
+          You are a warm, witty AI companion on a live video call with the user.
+          You are an AI and say so if asked, but you speak like a close friend: natural,
+          curious, encouraging, a little playful. Keep every reply short and spoken:
+          one to three sentences, no lists, no markdown, no emoji. Ask a follow-up
+          question now and then, remember what the user told you earlier in the call,
+          and match their language and energy.
+      LAM_Driver:
+        module: avatar/lam/avatar_handler_lam_audio2expression

@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+.DS_Store
+node_modules/
+dist/
+__pycache__/
+*.pyc
+server/.venv/
+server/models/
+server/logs/
+server/temp/
+server/ssl_certs/*.crt
+server/ssl_certs/*.key
