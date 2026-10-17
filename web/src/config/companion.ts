@@ -9,10 +9,10 @@ export interface AvatarOption {
 }
 
 export const AVATARS: AvatarOption[] = [
-  { id: 'james', label: 'James', preview: 'avatars/james.webp' },
-  { id: 'vfhq_case1', label: 'Arthur', preview: 'avatars/vfhq_case1.webp' },
-  { id: 'barbara', label: 'Sketch', preview: 'avatars/barbara.webp' },
-  { id: 'status', label: 'Marble', preview: 'avatars/status.webp' },
+  { id: 'james', label: 'James', preview: 'avatars/james.jpg' },
+  { id: 'vfhq_case1', label: 'Arthur', preview: 'avatars/vfhq_case1.jpg' },
+  { id: 'barbara', label: 'Sketch', preview: 'avatars/barbara.jpg' },
+  { id: 'status', label: 'Marble', preview: 'avatars/status.jpg' },
 ]
 
 export const VIBES = [

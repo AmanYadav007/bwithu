@@ -163,6 +163,15 @@ onBeforeUnmount(() => call.reset())
       0 30px 80px -30px rgba(0, 0, 0, 0.8);
   }
 }
+.frame::after {
+  // Blend the bottom of the avatar bust into the background.
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 38%;
+  background: linear-gradient(to top, var(--space-2) 25%, rgba(11, 14, 34, 0));
+  pointer-events: none;
+}
 .stage {
   position: absolute;
   inset: 0;
@@ -181,6 +190,7 @@ onBeforeUnmount(() => call.reset())
   }
 }
 .cover {
+  z-index: 1;
   position: absolute;
   inset: 0;
   display: grid;
@@ -238,6 +248,7 @@ onBeforeUnmount(() => call.reset())
   }
 }
 .name-tag {
+  z-index: 1;
   background: rgba(6, 8, 22, 0.6);
   border: 1px solid var(--line);
   position: absolute;
@@ -272,6 +283,7 @@ onBeforeUnmount(() => call.reset())
   }
 }
 .caption {
+  z-index: 1;
   position: absolute;
   left: 16px;
   right: 16px;
