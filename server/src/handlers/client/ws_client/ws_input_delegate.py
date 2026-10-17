@@ -1193,7 +1193,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                 if stream_key_str in self.text_buffer:
                     del self.text_buffer[stream_key_str]
 
-                logger.info(f"Submitted full text to engine: {full_text[:50]}...")
+                logger.debug(f"Submitted full text to engine: {full_text[:50]}...")
 
         except Exception as e:
             logger.error(f"Failed to process text data: {e}")

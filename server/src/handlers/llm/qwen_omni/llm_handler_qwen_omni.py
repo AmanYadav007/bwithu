@@ -354,7 +354,9 @@ class QwenOmniCallback(OmniRealtimeCallback):
             # ==================== Core Business Event Processing ====================
             # Log all events except high-frequency delta events
             if event_type not in ['response.audio.delta', 'response.audio_transcript.delta', 'response.text.delta']:
-                logger.info(f"OmniRealtimeCallback event: type={event_type}, data={response}")
+                # BwithU: payloads can contain what was said; keep them out of production (INFO) logs.
+                logger.info(f"OmniRealtimeCallback event: type={event_type}")
+                logger.debug(f"OmniRealtimeCallback event data: {response}")
             
             if event_type == 'error':
                 # Server error handling

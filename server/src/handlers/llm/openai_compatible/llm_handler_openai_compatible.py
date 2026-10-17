@@ -149,7 +149,7 @@ class HandlerLLM(HandlerBase, ABC):
             end_output.set_main_data('')
             streamer.stream_data(end_output, name="openai_compatible", config=ChatStreamConfig(cancelable=True), finish_stream=True)
             return
-        logger.info(f'llm input {context.model_name} {chat_text} ')
+        logger.debug(f'llm input {context.model_name} {chat_text} ')
         current_content = context.history.generate_next_messages(chat_text, 
                                                                  [context.current_image] if context.current_image is not None else [])
         logger.debug(f'llm input {context.model_name} {current_content} ')
@@ -179,7 +179,7 @@ class HandlerLLM(HandlerBase, ABC):
                 if (chunk and chunk.choices and chunk.choices[0] and chunk.choices[0].delta.content):
                     output_text = chunk.choices[0].delta.content
                     context.output_texts += output_text
-                    logger.info(output_text)
+                    logger.debug(output_text)
                     output = DataBundle(output_definition)
                     output.set_main_data(output_text)
                     streamer.stream_data(output)

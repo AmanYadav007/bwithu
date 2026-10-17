@@ -76,7 +76,8 @@ function submit() {
 
     <footer>
       You'll be talking to an AI. Your voice is processed by our AI provider to reply in real time and is never
-      recorded by us. <a href="https://bwithu.live/privacy" target="_blank" rel="noopener">Privacy</a>
+      recorded by us. By starting a call you confirm you're 18+ and agree to the
+      <a href="terms.html" target="_blank">Terms</a> and <a href="privacy.html" target="_blank">Privacy</a>.
     </footer>
   </main>
 </template>

@@ -130,7 +130,7 @@ class HandlerTTS(HandlerBase, ABC):
                 for sentence in complete_sentences:
                     if len(sentence.strip()) < 1:
                         continue
-                    logger.info('current sentence' + sentence)
+                    logger.debug('current sentence' + sentence)
                     
                     communicate = edge_tts.Communicate(sentence, self.voice)
                     data = b''
@@ -149,7 +149,7 @@ class HandlerTTS(HandlerBase, ABC):
                     output.set_main_data(output_audio)
                     context.submit_data(output)
         else:
-            logger.info('last sentence' + context.input_text)
+            logger.debug('last sentence' + context.input_text)
             if context.input_text is not None and len(context.input_text.strip()) > 0:
                     communicate = edge_tts.Communicate(context.input_text, self.voice)
                     data = b''
