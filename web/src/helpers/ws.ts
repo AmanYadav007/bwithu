@@ -25,8 +25,8 @@ export class WS extends EventEmitter {
     this.engine.addEventListener('message', (event) => {
       this.emit(WsEventTypes.WS_MESSAGE, event.data)
     })
-    this.engine.addEventListener('close', () => {
-      this.emit(WsEventTypes.WS_CLOSE)
+    this.engine.addEventListener('close', (event) => {
+      this.emit(WsEventTypes.WS_CLOSE, event.code)
     })
   }
   send(data: string | Int8Array | Uint8Array) {

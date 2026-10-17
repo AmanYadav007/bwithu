@@ -29,6 +29,27 @@ const rt: Runtime = { ws: null, avatar: null, stream: null, audioContext: null, 
 
 let serverConfig: { wsRoute: string; assetRoute: string } | null = null
 
+// Close codes sent by server/src/bwithu/gate.py.
+const REFUSALS: Record<number, string> = {
+  4001: 'Lots of people are calling right now. Please try again in a minute.',
+  4002: "You've used today's free minutes. Come back tomorrow — we'll be here.",
+  4003: 'BwithU is taking a short break. Please try again soon.',
+}
+
+// Anonymous per-browser id so the server can count free minutes per person.
+function clientId(): string {
+  try {
+    let id = localStorage.getItem('bwithu.cid')
+    if (!id) {
+      id = crypto.randomUUID()
+      localStorage.setItem('bwithu.cid', id)
+    }
+    return id
+  } catch {
+    return ''
+  }
+}
+
 async function loadServerConfig() {
   if (serverConfig) return serverConfig
   const config = await (await initConfig()).json()
@@ -77,6 +98,7 @@ export const useCallStore = defineStore('call', {
           user: companion.userName,
           vibe: companion.vibe,
           voice: companion.voice,
+          cid: clientId(),
         })
         rt.ws = markRaw(ws)
         ws.on(WsEventTypes.WS_OPEN, () => {
@@ -84,7 +106,12 @@ export const useCallStore = defineStore('call', {
           this._startMic()
           this._startTimer()
         })
-        ws.on(WsEventTypes.WS_CLOSE, () => this._finish(this.endReason || 'dropped'))
+        ws.on(WsEventTypes.WS_CLOSE, (code?: number) => {
+          // Refusals arrive right after the socket opens, so they win over the 'live' state.
+          if (code && REFUSALS[code]) return this._fail(REFUSALS[code])
+          if (code === 4002 || code === 4004) return this._finish('limit')
+          this._finish(this.endReason || 'dropped')
+        })
         ws.on(WsEventTypes.WS_ERROR, () => {
           if (this.status === 'connecting') this._fail('We could not reach your companion. Please try again.')
         })
@@ -162,12 +189,14 @@ export const useCallStore = defineStore('call', {
       try {
         // Served from public/ as a real file: Safari rejects data: URLs for worklets.
         await ctx.audioWorklet.addModule(new URL('worklets/mic-processor.js', document.baseURI).href)
+        if (rt.audioContext !== ctx) return // call ended while the worklet was loading
         const node = new AudioWorkletNode(ctx, 'mic-processor', { processorOptions: { targetSampleRate: 16000 } })
         node.port.onmessage = ({ data }) => data?.pcm && send(new Int16Array(data.pcm))
         source.connect(node)
         node.connect(ctx.destination)
         rt.micNode = node
       } catch (e) {
+        if (rt.audioContext !== ctx) return
         console.warn('[call] AudioWorklet unavailable', e)
         this._fail('Your browser cannot stream audio. Please use the latest Chrome, Edge or Safari.')
       }

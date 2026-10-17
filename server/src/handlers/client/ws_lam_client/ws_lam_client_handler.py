@@ -12,6 +12,7 @@ Both modes share the same asset-download route and session lifecycle.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from typing import Any, Dict, Literal, Optional, cast
@@ -36,6 +37,7 @@ from chat_engine.data_models.engine_channel_type import EngineChannelType
 from chat_engine.data_models.runtime_data.data_bundle import (
     DataBundleDefinition, DataBundleEntry, VariableSize,
 )
+from bwithu.gate import CLOSE_CALL_LIMIT, CLOSE_DAILY_LIMIT, gate
 from engine_utils.directory_info import DirectoryInfo
 from service.frontend_service import register_frontend
 
@@ -217,10 +219,18 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
             logger.info(f"Session WebSocket connected: session_id={session_id}")
 
             should_stop = False
+            ticket = None
             try:
                 session_delegate = self.handler_delegate.find_session_delegate(session_id)
                 if session_delegate is None:
-                    logger.info(f"Creating new session: {session_id}")
+                    # BwithU: admission control (concurrency, free minutes, kill switch) for new calls.
+                    ip = gate.client_ip(websocket.headers, websocket.client.host if websocket.client else None)
+                    ticket, refuse_code = gate.admit(websocket.query_params.get("cid", ""), ip)
+                    if ticket is None:
+                        logger.info(f"Call refused with code {refuse_code}: session_id={session_id}")
+                        await websocket.close(code=refuse_code)
+                        return
+                    logger.info(f"Creating new session: {session_id} (allowed {ticket.allowed_seconds}s)")
                     user_params = {k: v[:200] for k, v in list(websocket.query_params.items())[:10]}
                     session_delegate = self.handler_delegate.start_session(session_id, user_params=user_params)
 
@@ -229,13 +239,29 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
                     await websocket.close(code=1003, reason="Invalid session")
                     return
 
-                should_stop = await session_delegate.serve_websocket(websocket)
+                deadline = None
+                if ticket is not None:
+                    # Close with a code the web app understands; serve_websocket then ends on its own.
+                    async def close_at_deadline(allowed=ticket.allowed_seconds):
+                        await asyncio.sleep(allowed)
+                        logger.info(f"Call time limit reached: session_id={session_id}")
+                        await websocket.close(code=CLOSE_CALL_LIMIT if allowed >= gate.max_call_seconds
+                                              else CLOSE_DAILY_LIMIT)
+                    deadline = asyncio.create_task(close_at_deadline())
+                try:
+                    should_stop = await session_delegate.serve_websocket(websocket)
+                finally:
+                    if deadline is not None:
+                        deadline.cancel()
 
             except WebSocketDisconnect:
                 logger.info(f"Session WebSocket disconnected: session_id={session_id}")
             except Exception as e:
                 logger.error(f"Error in session WebSocket: {e}")
             finally:
+                if ticket is not None:
+                    should_stop = True
+                    gate.release(ticket)
                 if should_stop:
                     try:
                         self.handler_delegate.stop_session(session_id)
@@ -247,6 +273,13 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
                         await websocket.close()
                 except Exception:
                     pass
+
+        @app.get("/bwithu/stats")
+        async def bwithu_stats(token: str = ""):
+            expected = os.getenv("BWITHU_ADMIN_TOKEN", "")
+            if not expected or token != expected:
+                return JSONResponse(status_code=404, content={"detail": "Not Found"})
+            return gate.stats()
 
     def _register_asset_route(self, app: FastAPI):
         asset_route = self.asset_route
