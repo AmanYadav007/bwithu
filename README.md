@@ -53,6 +53,13 @@ For UI work, `cd web && npm run dev` serves on :5173 and proxies to the server.
 | `BWITHU_PAUSED=1` or file `server/PAUSED` | off | Kill switch: refuse new calls |
 | `BWITHU_ADMIN_TOKEN` | unset | Enables `GET /bwithu/stats?token=…` (active calls, minutes today) |
 
+## Capacity
+
+The only heavy server work is LAM lip-sync (wav2vec2 on CPU). Measured on an Apple M2 (Oct 18, 2026):
+82 ms of CPU per 1 s of avatar speech on one core; 8 parallel speakers ran at 20× real time. Cloud vCPUs
+are slower, but a 4-vCPU VM should still handle 10+ simultaneous calls; confirm with a load test on
+the real VM before raising `BWITHU_MAX_CALLS`.
+
 ## Deploy
 
 1. A Linux VM with 4–8 vCPU, 8 GB RAM, Docker (e.g. Hetzner CPX41 / DigitalOcean 8 GB, ~$30–50/month).
