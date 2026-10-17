@@ -193,6 +193,11 @@ class HandlerAvatarLAM(HandlerBase):
                 context=context.inference_context,
             )
             context.inference_context = context_update
+            # BwithU: an interrupt may have cancelled the stream while this chunk was being inferred;
+            # emitting it would open a fresh playback stream and the avatar would keep talking.
+            if stream_key and stream_key not in context.active_stream_keys:
+                context.inference_context = None
+                break
             need_flush = is_last and audio_segments.empty()
             if need_flush:
                 context.inference_context = None

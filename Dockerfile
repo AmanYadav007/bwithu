@@ -9,7 +9,7 @@ COPY web/ ./
 RUN npx vite build
 
 FROM python:3.11-slim
-ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 OPENBLAS_NUM_THREADS=1
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libopus0 curl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app/server

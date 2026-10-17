@@ -37,6 +37,7 @@ class TTSContext(HandlerContext):
         self.audio_dump_file = None
         # BwithU: text streams cancelled by an interrupt; their remaining sentences are not spoken.
         self.cancelled_keys = set()
+        self.current_input_key = None
 
 
 class HandlerTTS(HandlerBase, ABC):
@@ -72,7 +73,8 @@ class HandlerTTS(HandlerBase, ABC):
         }
         return HandlerDetail(
             inputs=inputs, outputs=outputs,
-            signal_filters=[SignalFilterRule(ChatSignalType.STREAM_CANCEL, None, ChatDataType.AVATAR_TEXT)],
+            signal_filters=[SignalFilterRule(ChatSignalType.STREAM_CANCEL, None, ChatDataType.AVATAR_TEXT),
+                            SignalFilterRule(ChatSignalType.STREAM_CANCEL, None, ChatDataType.AVATAR_AUDIO)],
         )
 
     def load(self, engine_config: ChatEngineConfigModel, handler_config: Optional[BaseModel] = None):
@@ -112,6 +114,7 @@ class HandlerTTS(HandlerBase, ABC):
         else:
             return
         stream_key = inputs.stream_id.stream_key_str if inputs.stream_id else None
+        context.current_input_key = stream_key
         if stream_key in context.cancelled_keys:
             context.input_text = ''
             return
@@ -172,7 +175,10 @@ class HandlerTTS(HandlerBase, ABC):
     def on_signal(self, context: HandlerContext, signal: ChatSignal):
         context = cast(TTSContext, context)
         if signal.type == ChatSignalType.STREAM_CANCEL and signal.related_stream:
+            # Our own audio output was cancelled (text may have finished already): stop the text we're reading.
             context.cancelled_keys.add(signal.related_stream.stream_key_str)
+            if context.current_input_key:
+                context.cancelled_keys.add(context.current_input_key)
             context.input_text = ''
 
     def destroy_context(self, context: HandlerContext):
