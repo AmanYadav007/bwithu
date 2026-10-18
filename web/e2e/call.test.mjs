@@ -21,6 +21,8 @@ const browser = await chromium.launch({
     `--use-file-for-fake-audio-capture=${path.join(dir, 'fixtures', fixture)}`,
     '--autoplay-policy=no-user-gesture-required',
     '--use-angle=metal', // swiftshader (software GL) is far too slow for the splat renderer
+    // e.g. E2E_CHROME_ARGS='--host-resolver-rules=MAP app.bwithu.live 104.21.21.58' to test a fresh DNS name
+    ...(process.env.E2E_CHROME_ARGS ? [process.env.E2E_CHROME_ARGS] : []),
   ],
 })
 const page = await (await browser.newContext({ viewport: { width: 430, height: 900 }, permissions: ['microphone'] })).newPage()

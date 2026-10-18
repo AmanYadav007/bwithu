@@ -9,7 +9,7 @@ All limits come from env vars so they can be changed without a code deploy:
   BWITHU_IP_MULTIPLIER    an IP may use this many users' worth of time (default 10; mobile carriers
                           put many people behind one IP, e.g. Jio/Airtel CGNAT in India)
   BWITHU_PAUSED=1         or a file named PAUSED in the server dir: refuse new calls
-  BWITHU_TRUST_PROXY=1    take the client IP from X-Forwarded-For (only behind our proxy)
+  BWITHU_TRUST_PROXY=1    take the client IP from CF-Connecting-IP / X-Forwarded-For (only behind our proxy)
 """
 import json
 import os
@@ -79,6 +79,10 @@ class CallGate:
     @staticmethod
     def client_ip(headers, peer: Optional[str]) -> str:
         if os.getenv("BWITHU_TRUST_PROXY") == "1":
+            # Cloudflare sets CF-Connecting-IP itself; the first X-Forwarded-For entry can be client-supplied.
+            cf_ip = headers.get("cf-connecting-ip", "").strip()
+            if cf_ip:
+                return cf_ip
             forwarded = headers.get("x-forwarded-for", "")
             if forwarded:
                 return forwarded.split(",")[0].strip()
