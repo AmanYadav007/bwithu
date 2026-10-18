@@ -35,7 +35,14 @@ page.on('websocket', (ws) =>
     let m
     try { m = JSON.parse(f.payload) } catch { return }
     const p = m.payload || {}
-    if (m.header?.name === 'EchoHumanText') console.log(ts(), 'heard:', p.text)
+    if (m.header?.name === 'EchoHumanText') {
+      console.log(ts(), 'heard:', p.text)
+      setTimeout(async () => {
+        const you = await page.locator('.you-caption').innerText().catch(() => '(none)')
+        console.log(ts(), 'you-caption:', JSON.stringify(you))
+        await page.screenshot({ path: path.join(dir, `last-${scenario}-you.png`) }).catch(() => {})
+      }, 800)
+    }
     if (m.header?.name !== 'ChatSignal') return
     if (p.stream_type === 'human_audio' && p.type === 'stream_end') vadEnd = Date.now()
     if (p.stream_type === 'client_playback' && p.type === 'stream_begin') {

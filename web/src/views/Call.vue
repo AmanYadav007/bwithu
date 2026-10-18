@@ -43,6 +43,35 @@ const caption = computed(() => {
   return tail
 })
 
+// What the user said stays above the reply, then fades a few seconds after the reply ends
+// (or if no reply comes).
+const HUMAN_LINGER_MS = 4000
+const HUMAN_NO_REPLY_MS = 8000
+const showHuman = ref(false)
+let humanTimer: number | undefined
+function hideHumanAfter(ms: number) {
+  clearTimeout(humanTimer)
+  humanTimer = window.setTimeout(() => (showHuman.value = false), ms)
+}
+watch(
+  () => call.humanCaption?.text,
+  (text) => {
+    showHuman.value = !!text
+    if (text && !call.avatarSpeaking) hideHumanAfter(HUMAN_NO_REPLY_MS)
+  }
+)
+watch(
+  () => call.avatarSpeaking,
+  (speaking) => {
+    if (speaking) clearTimeout(humanTimer)
+    else if (showHuman.value) hideHumanAfter(HUMAN_LINGER_MS)
+  }
+)
+const humanCaption = computed(() => {
+  const text = showHuman.value ? (call.humanCaption?.text.trim() ?? '') : ''
+  return text.length > 120 ? '…' + text.slice(text.indexOf(' ', text.length - 120) + 1) : text
+})
+
 function onFrameTap() {
   if (call.avatarSpeaking) call.interrupt()
 }
@@ -91,6 +120,7 @@ function editCompanion() {
 
 onBeforeUnmount(() => {
   clearInterval(captionTimer)
+  clearTimeout(humanTimer)
   call.reset()
 })
 </script>
@@ -153,9 +183,14 @@ onBeforeUnmount(() => {
           <strong>{{ companion.name }}</strong>
           <span class="status">{{ statusText }}</span>
         </div>
-        <Transition name="caption">
-          <p v-if="caption" :key="call.avatarCaption?.key" class="caption">{{ caption }}</p>
-        </Transition>
+        <div class="captions">
+          <Transition name="caption">
+            <p v-if="humanCaption" :key="call.humanCaption?.key" class="you-caption"><span>You</span>{{ humanCaption }}</p>
+          </Transition>
+          <Transition name="caption">
+            <p v-if="caption" :key="call.avatarCaption?.key" class="caption">{{ caption }}</p>
+          </Transition>
+        </div>
       </template>
     </div>
 
@@ -338,12 +373,22 @@ onBeforeUnmount(() => {
     opacity: 0.6;
   }
 }
-.caption {
+.captions {
   z-index: 1;
   position: absolute;
   left: 16px;
   right: 16px;
   bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-height: 38%;
+  overflow: hidden;
+  pointer-events: none;
+}
+.caption {
+  align-self: stretch;
   margin: 0;
   padding: 12px 16px;
   border-radius: 18px;
@@ -351,8 +396,27 @@ onBeforeUnmount(() => {
   font-size: 15px;
   line-height: 1.45;
   text-align: center;
-  max-height: 30%;
-  overflow: hidden;
+}
+.you-caption {
+  max-width: 85%;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 18px 18px 6px 18px;
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  font-size: 14px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.88);
+  span {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 2px;
+  }
 }
 .caption-enter-active,
 .caption-leave-active {
