@@ -128,7 +128,7 @@ onBeforeUnmount(() => {
 <template>
   <main class="call">
     <header class="top">
-      <Logo />
+      <Logo @home="editCompanion" />
       <button v-if="call.status === 'idle' || call.status === 'ended' || call.status === 'error'" class="btn-ghost" @click="editCompanion">
         Change companion
       </button>

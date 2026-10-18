@@ -13,4 +13,9 @@ into LAM 3D heads. LAM needs a CUDA GPU, so conversion happens outside this Mac:
 **Option B — automate it.** Give Claude a ModelScope access token (modelscope.cn → Account → Access Token)
 and it can call the same demo through its API.
 
+**Option D — Google Colab (free GPU, all portraits at once).** Open
+https://colab.research.google.com/github/AmanYadav007/bwithu/blob/main/avatars-src/make_faces_colab.ipynb,
+set Runtime → T4 GPU, Run all (~30–40 min the first time). It downloads `bwithu_faces.zip` with one
+`<name>.zip` per portrait; then do steps 3–4 of Option A for each.
+
 **Option C — rent a GPU for an hour** (RunPod/Modal/Lambda) and run LAM's `tools/AVATAR_EXPORT_GUIDE.md`.

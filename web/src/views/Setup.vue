@@ -28,6 +28,8 @@ function playSample(id: VoiceId) {
 }
 onBeforeUnmount(() => sample.pause())
 
+const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' })
+
 function submit() {
   sample.pause()
   store.save({ ...draft })
@@ -38,7 +40,7 @@ function submit() {
 <template>
   <main class="setup">
     <header>
-      <Logo />
+      <Logo @home="scrollToTop" />
     </header>
 
     <section class="intro">
