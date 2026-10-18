@@ -17,3 +17,6 @@ server/exp/
 web/e2e/fixtures/
 web/e2e/last-*.png
 web/e2e/lips-*.png
+
+# Photos of real people: never commit (the repo is public)
+avatars-src/private/
