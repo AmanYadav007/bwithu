@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, reactive } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 
 import Logo from '@/components/Logo.vue'
-import { AVATARS, VIBES, VOICES, type Companion } from '@/config/companion'
+import { AVATARS, VIBES, VOICES, type Companion, type VoiceId } from '@/config/companion'
 import { useCompanionStore } from '@/store/companion'
 
 const emit = defineEmits<{ done: [] }>()
@@ -11,7 +11,25 @@ const draft = reactive<Companion>({ ...store.companion })
 
 const displayName = computed(() => draft.name.trim() || 'Nova')
 
+// Voice samples: tapping play also picks that voice; tapping again stops it.
+const sample = new Audio()
+const playing = ref<VoiceId | null>(null)
+sample.onended = sample.onerror = () => (playing.value = null)
+function playSample(id: VoiceId) {
+  draft.voice = id
+  sample.pause()
+  if (playing.value === id) {
+    playing.value = null
+    return
+  }
+  sample.src = `voices/${id}.mp3`
+  playing.value = id
+  sample.play().catch(() => (playing.value = null))
+}
+onBeforeUnmount(() => sample.pause())
+
 function submit() {
+  sample.pause()
   store.save({ ...draft })
   emit('done')
 }
@@ -67,6 +85,17 @@ function submit() {
           <label v-for="v in VOICES" :key="v.id" :class="['chip', { on: draft.voice === v.id }]">
             <input v-model="draft.voice" type="radio" name="voice" :value="v.id" />
             <strong>{{ v.label }}</strong>
+            <small>{{ v.gender }} · {{ v.accent }}</small>
+            <button
+              type="button"
+              class="play"
+              :class="{ active: playing === v.id }"
+              :aria-label="playing === v.id ? `Stop ${v.label} sample` : `Play ${v.label} sample`"
+              @click.prevent="playSample(v.id)"
+            >
+              <svg v-if="playing !== v.id" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z" /></svg>
+              <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
+            </button>
           </label>
         </div>
       </fieldset>
@@ -208,9 +237,34 @@ input[type='radio'] {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
+  // Female voices on the first row, male on the second.
   &.voices {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
   }
+}
+.play {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  cursor: pointer;
+  &:hover,
+  &.active {
+    color: #fff;
+    border-color: var(--purple);
+    background: rgba(168, 85, 247, 0.25);
+  }
+}
+.voices .chip {
+  padding-right: 46px;
 }
 .chip {
   position: relative;
@@ -266,8 +320,11 @@ footer {
   .chips {
     grid-template-columns: 1fr;
   }
+  // Two columns: female on the left, male on the right.
   .chips.voices {
     grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: repeat(3, auto);
+    grid-auto-flow: column;
   }
   .avatars {
     gap: 8px;

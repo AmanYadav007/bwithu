@@ -5,7 +5,7 @@ as untrusted strings, so everything is length-limited and checked against allowl
 reaches a prompt.
 """
 import re
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 DEFAULT_NAME = "Nova"
 
@@ -61,6 +61,6 @@ def build_greeting_instructions(params: Dict[str, str]) -> str:
     return build_instructions(params) + " " + GREETING_INSTRUCTION.format(user=user)
 
 
-def pick_voice(params: Dict[str, str], allowed: List[str], default: str) -> str:
-    voice = params.get("voice", "")
-    return voice if voice in allowed else default
+def pick_voice(params: Dict[str, str], voices: Dict[str, str], default: str) -> str:
+    """Map the client's voice id (web/src/config/companion.ts VOICES) to this engine's voice name."""
+    return voices.get(params.get("voice", ""), default)

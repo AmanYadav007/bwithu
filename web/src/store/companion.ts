@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 
-import { AVATARS, DEFAULT_COMPANION, VIBES, VOICES, type Companion } from '@/config/companion'
+import { AVATARS, DEFAULT_COMPANION, LEGACY_VOICES, VIBES, VOICES, type Companion } from '@/config/companion'
 
 const STORAGE_KEY = 'bwithu.companion'
 
@@ -9,12 +9,13 @@ function load(): Companion | null {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
     const saved = JSON.parse(raw) as Partial<Companion>
+    const voice = LEGACY_VOICES[saved.voice ?? ''] ?? saved.voice
     return {
       name: typeof saved.name === 'string' && saved.name.trim() ? saved.name : DEFAULT_COMPANION.name,
       userName: typeof saved.userName === 'string' ? saved.userName : '',
       avatar: AVATARS.some((a) => a.id === saved.avatar) ? saved.avatar! : DEFAULT_COMPANION.avatar,
       vibe: VIBES.some((v) => v.id === saved.vibe) ? saved.vibe! : DEFAULT_COMPANION.vibe,
-      voice: VOICES.some((v) => v.id === saved.voice) ? saved.voice! : DEFAULT_COMPANION.voice,
+      voice: VOICES.some((v) => v.id === voice) ? voice! : DEFAULT_COMPANION.voice,
     }
   } catch {
     return null

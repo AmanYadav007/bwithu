@@ -40,7 +40,14 @@ default:
         enable_turn_detection: false
         enable_input_transcription: false
         # Per-call instructions come from src/bwithu/persona.py (name / vibe chosen in the web app).
-        # Voice names below are unverified for qwen3.5-omni-flash; check once DASHSCOPE_API_KEY is set.
-        allowed_voices: ["Tina", "Cherry", "Ethan", "Serena"]
+        # Client voice ids (web/src/config/companion.ts VOICES) -> Qwen voices. Unverified for
+        # qwen3.5-omni-flash (only one known male voice); check with scripts/qwen_check.py.
+        voices:
+          ava: "Tina"
+          emma: "Cherry"
+          neerja: "Serena"
+          andrew: "Ethan"
+          brian: "Ethan"
+          prabhat: "Ethan"
       LAM_Driver:
         module: avatar/lam/avatar_handler_lam_audio2expression

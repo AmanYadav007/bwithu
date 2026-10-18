@@ -19,11 +19,14 @@ from chat_engine.data_models.chat_signal_type import ChatSignalType
 from chat_engine.contexts.session_context import SessionContext
 from chat_engine.data_models.runtime_data.data_bundle import DataBundle, DataBundleDefinition, DataBundleEntry
 from engine_utils.directory_info import DirectoryInfo
+from bwithu.persona import pick_voice
 
 class TTSConfig(HandlerBaseConfigModel, BaseModel):
     ref_audio_path: str = Field(default=None)
     ref_audio_text: str = Field(default=None)
     voice: str = Field(default=None)
+    # BwithU: client voice id -> Edge voice name; anything else falls back to `voice`.
+    voices: Dict[str, str] = Field(default_factory=dict)
     sample_rate: int = Field(default=24000)
 
 
@@ -38,6 +41,7 @@ class TTSContext(HandlerContext):
         # BwithU: text streams cancelled by an interrupt; their remaining sentences are not spoken.
         self.cancelled_keys = set()
         self.current_input_key = None
+        self.voice = None
 
 
 class HandlerTTS(HandlerBase, ABC):
@@ -90,6 +94,10 @@ class HandlerTTS(HandlerBase, ABC):
             handler_config = TTSConfig()
         context = TTSContext(session_context.session_info.session_id)
         context.input_text = ''
+        # BwithU: the voice picked in the web app for this call.
+        params = session_context.session_info.user_params or {}
+        context.voice = pick_voice(params, handler_config.voices, handler_config.voice or self.voice)
+        logger.info(f"tts voice {context.voice} for session {context.session_id}")
         if context.dump_audio:
             dump_file_path = os.path.join(DirectoryInfo.get_project_dir(), 'temp',
                                             f"dump_avatar_audio_{context.session_id}_{time.localtime().tm_hour}_{time.localtime().tm_min}.pcm")
@@ -99,6 +107,19 @@ class HandlerTTS(HandlerBase, ABC):
     def start_context(self, session_context, context: HandlerContext):
         context = cast(TTSContext, context)
         edge_tts.Communicate(text="测试音频启动", voice=self.voice)
+
+    @staticmethod
+    def synthesize(text: str, voice: str) -> bytes:
+        # BwithU: Edge now and then returns no audio for a sentence; retry instead of dropping it.
+        for attempt in range(3):
+            try:
+                data = b''.join(c['data'] for c in edge_tts.Communicate(text, voice).stream_sync() if c['type'] == 'audio')
+                if data:
+                    return data
+            except edge_tts.exceptions.NoAudioReceived:
+                pass
+            logger.warning(f"edge tts: no audio (attempt {attempt + 1}, voice {voice})")
+        return b''
 
     def filter_text(self, text):
         pattern = r"[^a-zA-Z0-9\u4e00-\u9fff,.\~!?，。！？ ]"  # 匹配不在范围内的字符
@@ -135,17 +156,12 @@ class HandlerTTS(HandlerBase, ABC):
                         continue
                     logger.debug('current sentence' + sentence)
                     
-                    communicate = edge_tts.Communicate(sentence, self.voice)
-                    data = b''
-
-                    for chunk in communicate.stream_sync():
-                        if chunk['type'] == 'audio':
-                            # tts_audio = chunk['data']
-                            data += chunk['data']
-                    
+                    data = self.synthesize(sentence, context.voice)
                     if stream_key in context.cancelled_keys:  # interrupted while synthesizing
                         context.input_text = ''
                         return
+                    if not data:
+                        continue
                     output_audio = librosa.load(io.BytesIO(data), sr=None)[0]
                     output_audio = output_audio[np.newaxis, ...]
                     output = DataBundle(output_definition)
@@ -153,19 +169,15 @@ class HandlerTTS(HandlerBase, ABC):
                     context.submit_data(output)
         else:
             logger.debug('last sentence' + context.input_text)
+            data = b''
             if context.input_text is not None and len(context.input_text.strip()) > 0:
-                    communicate = edge_tts.Communicate(context.input_text, self.voice)
-                    data = b''
-
-                    for chunk in communicate.stream_sync():
-                        if chunk['type'] == 'audio':
-                            # tts_audio = chunk['data']
-                            data += chunk['data']
-                    output_audio = librosa.load(io.BytesIO(data), sr=None)[0]
-                    output_audio = output_audio[np.newaxis, ...]
-                    output = DataBundle(output_definition)
-                    output.set_main_data(output_audio)
-                    context.submit_data(output)
+                data = self.synthesize(context.input_text, context.voice)
+            if data:
+                output_audio = librosa.load(io.BytesIO(data), sr=None)[0]
+                output_audio = output_audio[np.newaxis, ...]
+                output = DataBundle(output_definition)
+                output.set_main_data(output_audio)
+                context.submit_data(output)
             context.input_text = ''
             output = DataBundle(output_definition)
             output.set_main_data(np.zeros(shape=(1, 240), dtype=np.float32))

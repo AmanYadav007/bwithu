@@ -1,6 +1,6 @@
 // Choices offered in onboarding. Avatar ids are file names served by the
-// server at /download/lam_asset/<id>.zip; voice ids must be in the server's
-// QwenOmni.allowed_voices; vibe ids must match server/src/bwithu/persona.py.
+// server at /download/lam_asset/<id>.zip; voice ids must be keys of `voices` in the server's
+// configs (Edge_TTS / QwenOmni); vibe ids must match server/src/bwithu/persona.py.
 
 export interface AvatarOption {
   id: string
@@ -21,11 +21,14 @@ export const VIBES = [
   { id: 'focused', label: 'Focused', hint: 'A clear-headed coach' },
 ] as const
 
+// Samples in public/voices/<id>.mp3 (same text in every voice).
 export const VOICES = [
-  { id: 'Tina', label: 'Tina' },
-  { id: 'Cherry', label: 'Cherry' },
-  { id: 'Ethan', label: 'Ethan' },
-  { id: 'Serena', label: 'Serena' },
+  { id: 'ava', label: 'Ava', gender: 'Female', accent: 'US' },
+  { id: 'emma', label: 'Emma', gender: 'Female', accent: 'US' },
+  { id: 'neerja', label: 'Neerja', gender: 'Female', accent: 'Indian' },
+  { id: 'andrew', label: 'Andrew', gender: 'Male', accent: 'US' },
+  { id: 'brian', label: 'Brian', gender: 'Male', accent: 'US' },
+  { id: 'prabhat', label: 'Prabhat', gender: 'Male', accent: 'Indian' },
 ] as const
 
 export type VibeId = (typeof VIBES)[number]['id']
@@ -44,8 +47,11 @@ export const DEFAULT_COMPANION: Companion = {
   userName: '',
   avatar: 'james',
   vibe: 'warm',
-  voice: 'Tina',
+  voice: 'ava',
 }
+
+// Voice ids saved before the voice list changed.
+export const LEGACY_VOICES: Record<string, VoiceId> = { Tina: 'ava', Cherry: 'emma', Serena: 'neerja', Ethan: 'andrew' }
 
 // Free minutes per call before the call ends itself (server also enforces connection_ttl).
 export const MAX_CALL_SECONDS = 10 * 60

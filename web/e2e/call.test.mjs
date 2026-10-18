@@ -54,8 +54,10 @@ page.on('websocket', (ws) =>
   })
 )
 await page.goto(url, { waitUntil: 'networkidle' })
-await page.evaluate(() =>
-  localStorage.setItem('bwithu.companion', JSON.stringify({ name: 'Nova', userName: 'Tester', avatar: 'james', vibe: 'warm', voice: 'Tina' }))
+// E2E_VOICE picks the companion's voice (an id from src/config/companion.ts VOICES).
+await page.evaluate((voice) =>
+  localStorage.setItem('bwithu.companion', JSON.stringify({ name: 'Nova', userName: 'Tester', avatar: 'james', vibe: 'warm', voice })),
+  process.env.E2E_VOICE || 'ava'
 )
 await page.reload({ waitUntil: 'networkidle' })
 await page.getByRole('button', { name: /Start call/ }).click()

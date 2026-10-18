@@ -35,6 +35,14 @@ default:
         enabled: True
         module: tts/edgetts/tts_handler_edgetts
         voice: "en-US-AvaMultilingualNeural"
+        # Client voice ids (web/src/config/companion.ts VOICES) -> Edge voices.
+        voices:
+          ava: "en-US-AvaMultilingualNeural"
+          emma: "en-US-EmmaMultilingualNeural"
+          neerja: "en-IN-NeerjaExpressiveNeural"
+          andrew: "en-US-AndrewMultilingualNeural"
+          brian: "en-US-BrianMultilingualNeural"
+          prabhat: "en-IN-PrabhatNeural"
       LLMOpenAICompatible:
         enabled: True
         module: llm/openai_compatible/llm_handler_openai_compatible
