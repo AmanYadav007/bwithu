@@ -4,6 +4,10 @@ import os
 import argparse
 import signal
 import sys
+import faulthandler
+
+# BwithU: `kill -USR1 <pid>` dumps every thread's stack to the log, to diagnose a hung server.
+faulthandler.register(signal.SIGUSR1, all_threads=True)
 
 import gradio
 import uvicorn

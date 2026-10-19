@@ -178,9 +178,10 @@ input[type='radio'] {
   opacity: 0;
   pointer-events: none;
 }
+// Five across on desktop (women on the first row, men on the second), three on phones.
 .avatars {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 12px;
 }
 .avatar {
@@ -329,6 +330,7 @@ footer {
     grid-auto-flow: column;
   }
   .avatars {
+    grid-template-columns: repeat(3, 1fr);
     gap: 8px;
   }
 }

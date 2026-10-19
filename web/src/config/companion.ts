@@ -8,11 +8,17 @@ export interface AvatarOption {
   preview: string
 }
 
+// Women first, then men. varshika.zip / varshika.jpg are real-person files kept out of git (see .gitignore).
 export const AVATARS: AvatarOption[] = [
+  { id: 'maya', label: 'Maya', preview: 'avatars/maya.jpg' },
+  { id: 'elena', label: 'Elena', preview: 'avatars/elena.jpg' },
+  { id: 'zara', label: 'Zara', preview: 'avatars/zara.jpg' },
+  { id: 'aiko', label: 'Aiko', preview: 'avatars/aiko.jpg' },
+  { id: 'varshika', label: 'Varshika', preview: 'avatars/varshika.jpg' },
+  { id: 'leo', label: 'Leo', preview: 'avatars/leo.jpg' },
+  { id: 'ravi', label: 'Ravi', preview: 'avatars/ravi.jpg' },
   { id: 'james', label: 'James', preview: 'avatars/james.jpg' },
   { id: 'vfhq_case1', label: 'Arthur', preview: 'avatars/vfhq_case1.jpg' },
-  { id: 'barbara', label: 'Sketch', preview: 'avatars/barbara.jpg' },
-  { id: 'status', label: 'Marble', preview: 'avatars/status.jpg' },
 ]
 
 export const VIBES = [
@@ -45,7 +51,7 @@ export interface Companion {
 export const DEFAULT_COMPANION: Companion = {
   name: 'Nova',
   userName: '',
-  avatar: 'james',
+  avatar: 'maya',
   vibe: 'warm',
   voice: 'ava',
 }

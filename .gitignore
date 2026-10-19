@@ -20,3 +20,5 @@ web/e2e/lips-*.png
 
 # Photos of real people: never commit (the repo is public)
 avatars-src/private/
+server/src/handlers/client/ws_lam_client/lam_samples/varshika.zip
+web/public/avatars/varshika.jpg
