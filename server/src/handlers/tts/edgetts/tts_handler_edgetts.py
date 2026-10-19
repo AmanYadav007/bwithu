@@ -1,3 +1,4 @@
+import asyncio
 import io
 import edge_tts
 import os
@@ -20,6 +21,10 @@ from chat_engine.contexts.session_context import SessionContext
 from chat_engine.data_models.runtime_data.data_bundle import DataBundle, DataBundleDefinition, DataBundleEntry
 from engine_utils.directory_info import DirectoryInfo
 from bwithu.persona import pick_voice
+
+# Longest we wait for one sentence of speech before retrying.
+SYNTH_TIMEOUT_S = 15
+
 
 class TTSConfig(HandlerBaseConfigModel, BaseModel):
     ref_audio_path: str = Field(default=None)
@@ -109,16 +114,29 @@ class HandlerTTS(HandlerBase, ABC):
         edge_tts.Communicate(text="测试音频启动", voice=self.voice)
 
     @staticmethod
-    def synthesize(text: str, voice: str) -> bytes:
-        # BwithU: Edge now and then returns no audio for a sentence; retry instead of dropping it.
+    async def _collect_audio(text: str, voice: str) -> bytes:
+        data = b''
+        async for chunk in edge_tts.Communicate(text, voice, connect_timeout=5, receive_timeout=10).stream():
+            if chunk['type'] == 'audio':
+                data += chunk['data']
+        return data
+
+    @classmethod
+    def synthesize(cls, text: str, voice: str) -> bytes:
+        # BwithU: Edge now and then returns no audio, or stops answering mid-sentence. edge_tts' stream_sync()
+        # can then block forever (seen: a pump thread stuck for hours, which froze session shutdown), so
+        # collect with a hard deadline per attempt and retry instead of dropping the sentence.
         for attempt in range(3):
             try:
-                data = b''.join(c['data'] for c in edge_tts.Communicate(text, voice).stream_sync() if c['type'] == 'audio')
+                data = asyncio.run(asyncio.wait_for(cls._collect_audio(text, voice), SYNTH_TIMEOUT_S))
                 if data:
                     return data
-            except edge_tts.exceptions.NoAudioReceived:
-                pass
-            logger.warning(f"edge tts: no audio (attempt {attempt + 1}, voice {voice})")
+                problem = 'no audio'
+            except asyncio.TimeoutError:
+                problem = f'timed out after {SYNTH_TIMEOUT_S}s'
+            except Exception as e:  # NoAudioReceived, network errors
+                problem = repr(e)
+            logger.warning(f"edge tts: {problem} (attempt {attempt + 1}, voice {voice})")
         return b''
 
     def filter_text(self, text):

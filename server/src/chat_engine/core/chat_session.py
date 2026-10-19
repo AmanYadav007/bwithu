@@ -347,7 +347,11 @@ class ChatSession:
         self.session_context.shared_states.active = False
         for handler_name, handler_record in self.handlers.items():
             if handler_record.pump_thread:
-                handler_record.pump_thread.join()
+                # BwithU: bounded wait; a handler stuck in a network call must not hang shutdown. The pump
+                # loop sees active=False and exits once that call returns.
+                handler_record.pump_thread.join(timeout=5)
+                if handler_record.pump_thread.is_alive():
+                    logger.warning(f"handler {handler_name} still busy after 5s; not waiting for it")
                 handler_record.pump_thread = None
             handler_record.env.handler.destroy_context(handler_record.env.context)
         self.signal_manager.shutdown()

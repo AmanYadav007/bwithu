@@ -265,7 +265,8 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
                     gate.release(ticket)
                 if should_stop:
                     try:
-                        self.handler_delegate.stop_session(session_id)
+                        # BwithU: off the event loop, so a slow shutdown can't freeze every other request.
+                        await asyncio.to_thread(self.handler_delegate.stop_session, session_id)
                         logger.info(f"Session stopped: {session_id}")
                     except Exception as e:
                         logger.error(f"Error stopping session: {e}")
