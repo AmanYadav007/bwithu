@@ -27,7 +27,7 @@ results
 /sync*.sh
 /local_build.sh
 models/iic
-models
+/models/
 resource/audio
 resource/avatar/*
 !resource/avatar/put_avatar_here.txt

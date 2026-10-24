@@ -107,6 +107,11 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Received KeyboardInterrupt, exiting.")
+    except BaseException:
+        # BwithU: os._exit below skips Python's own traceback printing, so a startup error would vanish.
+        logger.exception("Server stopped with an error")
+        sys.stdout.flush()
+        os._exit(1)
     finally:
         signal.signal(signal.SIGINT, signal.SIG_DFL)
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
