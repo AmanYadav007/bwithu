@@ -1,0 +1,16 @@
+# BwithU on a VPS: one container and no published ports; visitors arrive through the Cloudflare tunnel that
+# start.sh runs inside it. deploy.sh copies this file, the Dockerfile and a trimmed .env to the server.
+services:
+  bwithu:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - usage:/app/server/temp
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+volumes:
+  usage:
