@@ -11,11 +11,7 @@ stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
 (cd "$root/web" && npx vite build > /dev/null)
-{
-  git -C "$root" ls-files server
-  # Real-person files kept out of git (see .gitignore).
-  echo "server/src/handlers/client/ws_lam_client/lam_samples/varshika.zip"
-} | while IFS= read -r f; do [ -f "$root/$f" ] && echo "$f"; done > "$stage/.files"
+git -C "$root" ls-files server | while IFS= read -r f; do [ -f "$root/$f" ] && echo "$f"; done > "$stage/.files"
 rsync -a --files-from="$stage/.files" "$root/" "$stage/"
 rm "$stage/.files"
 mkdir -p "$stage/web"

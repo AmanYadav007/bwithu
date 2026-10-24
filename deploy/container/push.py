@@ -20,7 +20,7 @@ from huggingface_hub import HfApi
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 SECRETS = ["LLM_API_URL", "LLM_MODEL", "LLM_API_KEY", "BWITHU_ADMIN_TOKEN", "CLOUDFLARE_TUNNEL_TOKEN"]
-LOCAL_ONLY = ["server/src/handlers/client/ws_lam_client/lam_samples/varshika.zip"]
+LOCAL_ONLY: list = []  # gitignored files to ship too (e.g. real-person faces)
 CARD = """---
 title: BwithU
 emoji: 💬
