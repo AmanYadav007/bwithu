@@ -10,6 +10,13 @@ here="$root/deploy/container"
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
+# Only git-tracked server files are shipped, so uncommitted server changes would silently be left out.
+if [ -n "$(git -C "$root" status --porcelain --untracked-files=all -- server)" ]; then
+  echo "deploy.sh: server/ has uncommitted changes; commit them first:" >&2
+  git -C "$root" status --short --untracked-files=all -- server >&2
+  exit 1
+fi
+
 (cd "$root/web" && npx vite build > /dev/null)
 git -C "$root" ls-files server | while IFS= read -r f; do [ -f "$root/$f" ] && echo "$f"; done > "$stage/.files"
 rsync -a --files-from="$stage/.files" "$root/" "$stage/"
