@@ -2,6 +2,7 @@
 
 import os
 import re
+import time
 from typing import Dict, Optional, Set, cast
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -18,7 +19,7 @@ from chat_engine.data_models.chat_stream import StreamKey
 from chat_engine.contexts.session_context import SessionContext
 from chat_engine.data_models.runtime_data.data_bundle import DataBundle, DataBundleDefinition, DataBundleEntry
 from handlers.llm.openai_compatible.chat_history_manager import ChatHistory, HistoryMessage
-from bwithu.persona import build_instructions
+from bwithu.persona import GREETING_CUE, build_instructions
 from chat_engine.data_models.chat_stream_config import ChatStreamConfig
 
 
@@ -30,6 +31,9 @@ class LLMConfig(HandlerBaseConfigModel, BaseModel):
     api_url: str = Field(default=os.getenv("LLM_API_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"))
     enable_video_input: bool = Field(default=False)
     history_length: int = Field(default=20)
+    # BwithU: if the user talks over a reply this soon after it was generated, they hadn't finished their turn
+    # (a pause mid-sentence ended it early), so their next words are merged into that turn instead.
+    early_interrupt_merge_s: float = Field(default=3.0)
 
 
 class LLMContext(HandlerContext):
@@ -48,6 +52,9 @@ class LLMContext(HandlerContext):
         self.history = None
         self.enable_video_input = False
         self.active_stream_keys: Set[StreamKey] = set()
+        self.early_interrupt_merge_s = 3.0
+        self.last_turn = None  # (human text, time its reply finished generating)
+        self.merge_next = False
 
 
 class HandlerLLM(HandlerBase, ABC):
@@ -104,6 +111,7 @@ class HandlerLLM(HandlerBase, ABC):
         context.api_url = handler_config.api_url
         context.enable_video_input = handler_config.enable_video_input
         context.history = ChatHistory(history_length=handler_config.history_length)
+        context.early_interrupt_merge_s = handler_config.early_interrupt_merge_s
         context.client =    OpenAI(  
             # 若没有配置环境变量，请用百炼API Key将下行替换为：api_key="sk-xxx",
             api_key=context.api_key,
@@ -149,6 +157,7 @@ class HandlerLLM(HandlerBase, ABC):
             end_output.set_main_data('')
             streamer.stream_data(end_output, name="openai_compatible", config=ChatStreamConfig(cancelable=True), finish_stream=True)
             return
+        chat_text = self._merge_early_interrupted_turn(context, chat_text)
         logger.debug(f'llm input {context.model_name} {chat_text} ')
         current_content = context.history.generate_next_messages(chat_text, 
                                                                  [context.current_image] if context.current_image is not None else [])
@@ -186,6 +195,7 @@ class HandlerLLM(HandlerBase, ABC):
             if not cancelled:
                 context.history.add_message(HistoryMessage(role="human", content=chat_text))
                 context.history.add_message(HistoryMessage(role="avatar", content=context.output_texts))
+                context.last_turn = (chat_text, time.monotonic())
         except Exception as e:
             logger.error(e)
             if isinstance(e, APIStatusError):
@@ -210,8 +220,26 @@ class HandlerLLM(HandlerBase, ABC):
         end_output.set_main_data('')
         streamer.stream_data(end_output, finish_stream=True)
 
+    @staticmethod
+    def _merge_early_interrupted_turn(context: "LLMContext", chat_text: str) -> str:
+        if not context.merge_next or context.last_turn is None:
+            return chat_text
+        previous, _ = context.last_turn
+        context.merge_next = False
+        context.last_turn = None
+        history = context.history.message_history
+        # Drop the exchange the user talked over and answer the whole sentence instead.
+        if len(history) >= 2 and history[-2].role == "human" and history[-2].content == previous:
+            del history[-2:]
+        logger.info("LLM: merged an early-interrupted turn into the next one")
+        return f"{previous} {chat_text}"
+
     def on_signal(self, context: HandlerContext, signal: ChatSignal):
         context = cast(LLMContext, context)
+        if signal.type == ChatSignalType.STREAM_CANCEL and context.last_turn is not None:
+            text, finished_at = context.last_turn
+            if text != GREETING_CUE and time.monotonic() - finished_at <= context.early_interrupt_merge_s:
+                context.merge_next = True
         if signal.type == ChatSignalType.STREAM_CANCEL and signal.related_stream:
             stream_key = signal.related_stream.stream_key_str
             if stream_key is not None and stream_key in context.active_stream_keys:

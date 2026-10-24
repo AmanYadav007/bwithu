@@ -1,4 +1,4 @@
-# Dev pipeline when no Qwen key is available: local ASR + any OpenAI-compatible LLM + free Edge TTS.
+# Free pipeline (used in production): Groq Whisper ASR (SenseVoice fallback) + any OpenAI-compatible LLM + Edge TTS.
 # Set LLM_API_KEY / LLM_API_URL / LLM_MODEL in the root .env (e.g. xAI or Qwen compatible-mode).
 default:
   logger:
@@ -23,13 +23,14 @@ default:
         module: vad/silerovad/vad_handler_silero
         speaking_threshold: 0.3
         start_delay: 2048
-        end_delay: 8000          # 0.5 s of silence ends the turn
-        buffer_look_back: 12000  # 0.75 s pre-roll, also recovers the start of a barge-in
+        end_delay: 6400          # 0.4 s of silence ends the turn (the LLM merges a turn cut off by a pause)
+        buffer_look_back: 24000  # 1.5 s pre-roll, also recovers the words spoken before a barge-in registers
         speech_padding: 512
         volume_threshold: -35
-      SenseVoice:
+      ASR:
         enabled: True
-        module: asr/sensevoice/asr_handler_sensevoice
+        # Whisper on Groq (GROQ_API_KEY or LLM_API_KEY); local SenseVoice is the fallback.
+        module: asr/groq_whisper/asr_handler_groq_whisper
         model_name: "iic/SenseVoiceSmall"
       Edge_TTS:
         enabled: True

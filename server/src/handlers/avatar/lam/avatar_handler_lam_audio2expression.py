@@ -1,6 +1,7 @@
 import os
 import queue
 import sys
+import threading
 import time
 from typing import Dict, Optional, Set, cast, List
 
@@ -29,6 +30,9 @@ class AvatarLAMConfig(HandlerBaseConfigModel, BaseModel):
     model_name: str = "LAM_audio2exp"
     feature_extractor_model_name: str = "wav2vec2-base-960h"
     audio_sample_rate: int = Field(default=24000)
+    # BwithU: CPU threads for inference (0 = all cores). Something in the stack leaves torch on one thread,
+    # which doubled lip-sync time on the 4-core Oracle server.
+    torch_threads: int = Field(default=0)
 
 
 class AvatarLAMContext(HandlerContext):
@@ -157,6 +161,7 @@ class HandlerAvatarLAM(HandlerBase):
                output_definitions: Dict[ChatDataType, HandlerDataInfo]):
         output_definition = output_definitions.get(ChatDataType.AVATAR_MOTION_DATA).definition
         context = cast(AvatarLAMContext, context)
+        _use_torch_threads(context.config.torch_threads)
         streamer = context.data_submitter.get_streamer(ChatDataType.AVATAR_MOTION_DATA)
         stream = streamer.current_stream
         stream_key = stream.identity.stream_key_str if stream is not None else None
@@ -228,3 +233,16 @@ class HandlerAvatarLAM(HandlerBase):
 
     def destroy_context(self, context: HandlerContext):
         pass
+
+
+_thread_state = threading.local()
+
+
+def _use_torch_threads(wanted: int) -> None:
+    """Set torch's intra-op threads once per pump thread."""
+    if getattr(_thread_state, "torch_threads_set", False):
+        return
+    import torch
+    torch.set_num_threads(wanted or os.cpu_count() or 1)
+    _thread_state.torch_threads_set = True
+    logger.info(f"LAM inference uses {torch.get_num_threads()} threads")

@@ -137,15 +137,19 @@ class HandlerASR(HandlerBase, ABC):
             logger.info('dump audio')
             context.audio_dump_file.write(output_audio.tobytes())
 
-        res = self.model.generate(input=output_audio, batch_size_s=10)
-        logger.info(res)
         context.output_audios.clear()
-        output_text = re.sub(r"<\|.*?\|>", "", res[0]['text'])
+        output_text = self.transcribe(output_audio)
         if len(output_text) == 0:
             return
         output = DataBundle(output_definition)
         output.set_main_data(output_text)
         context.submit_data(output, finish_stream=True)
+
+    def transcribe(self, audio: np.ndarray) -> str:
+        """16 kHz mono float audio -> text."""
+        res = self.model.generate(input=audio, batch_size_s=10)
+        logger.debug(res)  # BwithU: transcripts only at DEBUG (privacy)
+        return re.sub(r"<\|.*?\|>", "", res[0]['text'])
 
     def destroy_context(self, context: HandlerContext):
         pass
