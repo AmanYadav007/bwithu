@@ -22,10 +22,25 @@ function load(): Companion | null {
   }
 }
 
+/** Links from bwithu.live preselect a face and/or voice: app.bwithu.live/?face=leo&voice=andrew */
+function fromLink(): Partial<Companion> {
+  const params = new URLSearchParams(window.location.search)
+  const face = params.get('face')
+  const voice = params.get('voice')
+  const picked: Partial<Companion> = {}
+  if (face && AVATARS.some((a) => a.id === face)) picked.avatar = face
+  if (voice && VOICES.some((v) => v.id === voice)) picked.voice = voice as Companion['voice']
+  if (params.has('face') || params.has('voice')) window.history.replaceState(null, '', window.location.pathname)
+  return picked
+}
+
 export const useCompanionStore = defineStore('companion', {
   state: () => {
     const saved = load()
-    return { companion: saved ?? { ...DEFAULT_COMPANION }, isSetUp: saved !== null }
+    const picked = fromLink()
+    const linked = Object.keys(picked).length > 0
+    // A link lands on the setup screen with its pick selected, so the visitor can name them first.
+    return { companion: { ...(saved ?? DEFAULT_COMPANION), ...picked }, isSetUp: saved !== null && !linked }
   },
   actions: {
     save(next: Companion) {
