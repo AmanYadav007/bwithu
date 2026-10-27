@@ -1,91 +1,70 @@
 """
 LAM WebSocket Client Handler
 
-Supports two upstream modes controlled by the ``upstream_mode`` config field:
-
-  - ``rtc``  (default): Audio/video upstream via WebRTC, downstream motion
-    data / text / signals via the ws_client WebSocket protocol.
-  - ``ws``: Pure WebSocket mode — audio, text, motion data, and signals all
-    travel over a single ``/ws/session/{session_id}`` connection.
-
-Both modes share the same asset-download route and session lifecycle.
+Audio, text, motion data and signals all travel over a single ``/ws/session/{session_id}`` connection.
+Also serves the avatar asset zips and the BwithU stats/feedback routes.
 """
 from __future__ import annotations
 
 import asyncio
 import os
 import re
-from typing import Any, Dict, Literal, Optional, cast
+from typing import Dict, Optional, cast
 
-import gradio
 from fastapi import FastAPI, Request, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 from starlette.websockets import WebSocket, WebSocketState
 
-from chat_engine.common.client_handler_base import ClientSessionDelegate
+from chat_engine.common.client_handler_base import ClientHandlerBase, ClientSessionDelegate
 from chat_engine.common.handler_base import HandlerDataInfo, HandlerDetail, HandlerBaseInfo
 from chat_engine.contexts.handler_context import HandlerContext
 from chat_engine.contexts.session_context import SessionContext
 from chat_engine.data_models.chat_data.chat_data_model import ChatData
 from chat_engine.data_models.chat_data_type import ChatDataType
 from chat_engine.data_models.chat_engine_config_data import HandlerBaseConfigModel, ChatEngineConfigModel
+from chat_engine.data_models.chat_stream_config import ChatStreamConfig
 from chat_engine.data_models.chat_signal import ChatSignal
-from chat_engine.data_models.chat_signal_type import ChatSignalType
 from chat_engine.data_models.engine_channel_type import EngineChannelType
-from chat_engine.data_models.runtime_data.data_bundle import (
-    DataBundleDefinition, DataBundleEntry, VariableSize,
-)
+from chat_engine.data_models.runtime_data.data_bundle import DataBundleDefinition, DataBundleEntry
 from bwithu import feedback
 from bwithu.gate import CLOSE_CALL_LIMIT, CLOSE_DAILY_LIMIT, gate
 from engine_utils.directory_info import DirectoryInfo
 from service.frontend_service import register_frontend
 
-import handlers.client.rtc_client.client_handler_rtc as _rtc_module
-from .ws_lam_session_delegate import WsLamClientSessionDelegate
+from handlers.client.ws_client.ws_input_delegate import WsInputSessionDelegate
 
 
 # ============================================================================
 # Config
 # ============================================================================
 
-class WsLamClientConfigModel(_rtc_module.ClientRtcConfigModel, BaseModel):
-    """LAM handler config: RTC fields + asset path + WS heartbeat."""
+class WsLamClientConfigModel(HandlerBaseConfigModel, BaseModel):
+    """LAM handler config: asset path + WS heartbeat."""
     asset_path: Optional[str] = Field(default=None, description="LAM asset zip path")
     heartbeat_timeout: int = Field(default=30, description="WS heartbeat timeout (seconds)")
-    upstream_mode: Literal["rtc", "ws"] = Field(
-        default="rtc",
-        description="'rtc': WebRTC audio/video + WS data; 'ws': pure WebSocket",
-    )
 
 
 # ============================================================================
 # Context
 # ============================================================================
 
-class WsLamClientContext(_rtc_module.ClientRtcContext):
+class WsLamClientContext(HandlerContext):
     def __init__(self, session_id: str):
         super().__init__(session_id)
         self.config: Optional[WsLamClientConfigModel] = None
-        self.client_session_delegate: Optional[WsLamClientSessionDelegate] = None
+        self.client_session_delegate: Optional[WsInputSessionDelegate] = None
 
 
 # ============================================================================
 # Handler
 # ============================================================================
 
-class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
+class WsLamClientHandler(ClientHandlerBase):
     """
     LAM Client Handler
 
-    Two upstream modes (selected by ``upstream_mode`` config):
-
-    **rtc** (default):
-      - Upstream (audio/video): WebRTC via ClientHandlerRtc
-      - Downstream (motion, text, signals): /ws/session via ws_client protocol
-
-    **ws**:
       - Upstream (audio/text): /ws/session via ws_client protocol
       - Downstream (motion, audio, text, signals): same /ws/session connection
 
@@ -96,6 +75,9 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
 
     def __init__(self):
         super().__init__()
+        self.engine_config: Optional[ChatEngineConfigModel] = None
+        self.handler_config: Optional[WsLamClientConfigModel] = None
+        self.output_bundle_definitions: Dict[EngineChannelType, DataBundleDefinition] = {}
         self.asset_dir: Optional[str] = None
         self.asset_name: Optional[str] = None
 
@@ -106,7 +88,7 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
     def get_handler_info(self) -> HandlerBaseInfo:
         return HandlerBaseInfo(
             config_model=WsLamClientConfigModel,
-            client_session_delegate_class=WsLamClientSessionDelegate,
+            client_session_delegate_class=WsInputSessionDelegate,
         )
 
     # ------------------------------------------------------------------
@@ -119,28 +101,16 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
         if handler_config is None or not isinstance(handler_config, WsLamClientConfigModel):
             handler_config = WsLamClientConfigModel()
         self.handler_config = handler_config
-
-        if handler_config.upstream_mode == "rtc":
-            self.prepare_rtc_definitions()
-        else:
-            self._prepare_ws_definitions()
-
+        self._prepare_ws_definitions()
         self._resolve_asset(handler_config)
-        logger.info(f"WsLamClientHandler loaded (upstream_mode={handler_config.upstream_mode})")
+        logger.info("WsLamClientHandler loaded")
 
     def _prepare_ws_definitions(self):
-        """Prepare data definitions for pure WebSocket mode (no RTC)."""
+        """Prepare the data definitions of what the client sends in."""
         audio_def = DataBundleDefinition()
         audio_def.add_entry(DataBundleEntry.create_audio_entry("mic_audio", 1, 16000))
         audio_def.lockdown()
         self.output_bundle_definitions[EngineChannelType.AUDIO] = audio_def
-
-        video_def = DataBundleDefinition()
-        video_def.add_entry(DataBundleEntry.create_framed_entry(
-            "camera_video", [VariableSize(), VariableSize(), VariableSize(), 3], 0, 30,
-        ))
-        video_def.lockdown()
-        self.output_bundle_definitions[EngineChannelType.VIDEO] = video_def
 
         text_def = DataBundleDefinition()
         text_def.add_entry(DataBundleEntry.create_text_entry("human_text"))
@@ -169,11 +139,10 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
             raise ValueError(f"Asset file {asset_path} not found.")
 
     # ------------------------------------------------------------------
-    # App setup: register WS endpoint + asset route + RTC
+    # App setup: register WS endpoint + asset route + web app
     # ------------------------------------------------------------------
 
-    def on_setup_app(self, app: FastAPI, ui: gradio.blocks.Block,
-                     parent_block: Optional[gradio.blocks.Block] = None):
+    def on_setup_app(self, app: FastAPI):
         self._register_ws_session_endpoint(app)
         self._register_asset_route(app)
 
@@ -183,35 +152,23 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
             "ws_session_route": "/ws/session",
         }
 
-        if self.handler_config.upstream_mode == "rtc":
-            self.setup_rtc_ui(
-                ui=ui,
-                parent_block=parent_block,
-                fastapi=app,
-                avatar_config=avatar_config,
-            )
-            logger.info("WsLamClientHandler: WS + RTC + asset routes registered")
-        else:
-            def init_config_provider():
-                return {
-                    "chat_mode": "ws",
-                    "avatar_config": avatar_config,
-                    "ws_session_route": "/ws/session",
-                    "track_constraints": {
-                        "audio": {
-                            "sampleRate": 16000,
-                            "channelCount": 1,
-                            "autoGainControl": False,
-                            "noiseSuppression": False,
-                            "echoCancellation": True,
-                        }
-                    },
-                }
-            register_frontend(
-                app=app, ui=ui, parent_block=parent_block,
-                init_config=init_config_provider,
-            )
-            logger.info("WsLamClientHandler: WS + asset routes registered (pure WS mode)")
+        def init_config_provider():
+            return {
+                "chat_mode": "ws",
+                "avatar_config": avatar_config,
+                "ws_session_route": "/ws/session",
+                "track_constraints": {
+                    "audio": {
+                        "sampleRate": 16000,
+                        "channelCount": 1,
+                        "autoGainControl": False,
+                        "noiseSuppression": False,
+                        "echoCancellation": True,
+                    }
+                },
+            }
+        register_frontend(app=app, init_config=init_config_provider)
+        logger.info("WsLamClientHandler: WS + asset routes registered")
 
     def _register_ws_session_endpoint(self, app: FastAPI):
         @app.websocket("/ws/session/{session_id}")
@@ -235,7 +192,7 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
                     user_params = {k: v[:200] for k, v in list(websocket.query_params.items())[:10]}
                     session_delegate = self.handler_delegate.start_session(session_id, user_params=user_params)
 
-                if not isinstance(session_delegate, WsLamClientSessionDelegate):
+                if not isinstance(session_delegate, WsInputSessionDelegate):
                     logger.error(f"Invalid session delegate type: {type(session_delegate)}")
                     await websocket.close(code=1003, reason="Invalid session")
                     return
@@ -346,23 +303,22 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
     def on_setup_session_delegate(self, session_context: SessionContext,
                                   handler_context: HandlerContext,
                                   session_delegate: ClientSessionDelegate):
-        # Parent sets clock, data_submitter, input_data_definitions, shared_states
-        super().on_setup_session_delegate(session_context, handler_context, session_delegate)
-
         handler_context = cast(WsLamClientContext, handler_context)
-        session_delegate = cast(WsLamClientSessionDelegate, session_delegate)
+        session_delegate = cast(WsInputSessionDelegate, session_delegate)
+
+        session_delegate.clock = session_context.get_clock()
+        session_delegate.data_submitter = handler_context.data_submitter
+        session_delegate.input_data_definitions = self.output_bundle_definitions
+        session_delegate.shared_states = session_context.shared_states
+        handler_context.client_session_delegate = session_delegate
 
         session_delegate.session_id = session_context.session_info.session_id
         session_delegate.signal_emitter = handler_context.signal_emitter
         session_delegate.heartbeat_timeout = self.handler_config.heartbeat_timeout
         session_delegate.session_history = session_context.session_history
         session_delegate.stream_manager = handler_context.stream_manager
-        session_delegate.upstream_mode = self.handler_config.upstream_mode
 
-        logger.info(
-            f"WsLam session delegate setup completed for session "
-            f"{session_context.session_info.session_id} (upstream_mode={self.handler_config.upstream_mode})"
-        )
+        logger.info(f"WsLam session delegate setup completed for session {session_context.session_info.session_id}")
 
     # ------------------------------------------------------------------
     # Handler detail: include AVATAR_MOTION_DATA input
@@ -370,16 +326,25 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
 
     def get_handler_detail(self, session_context: SessionContext,
                            context: HandlerContext) -> HandlerDetail:
-        detail = self.create_handler_detail(session_context, context)
-        detail.inputs[ChatDataType.AVATAR_MOTION_DATA] = HandlerDataInfo(
-            type=ChatDataType.AVATAR_MOTION_DATA,
-            input_priority=-1,
-        )
-        # Ensure priority for other client-facing data types
-        for data_type in (ChatDataType.AVATAR_AUDIO, ChatDataType.AVATAR_TEXT, ChatDataType.HUMAN_TEXT):
-            if data_type in detail.inputs:
-                detail.inputs[data_type].input_priority = -1
-        return detail
+        inputs = {
+            data_type: HandlerDataInfo(type=data_type, input_priority=-1)
+            for data_type in (ChatDataType.AVATAR_AUDIO, ChatDataType.AVATAR_TEXT, ChatDataType.HUMAN_TEXT,
+                              ChatDataType.AVATAR_MOTION_DATA)
+        }
+        _no_link = ChatStreamConfig(cancelable=False, auto_link_input=False)
+        outputs = {
+            ChatDataType.MIC_AUDIO: HandlerDataInfo(
+                type=ChatDataType.MIC_AUDIO,
+                definition=self.output_bundle_definitions[EngineChannelType.AUDIO],
+                output_stream_config=_no_link,
+            ),
+            ChatDataType.HUMAN_TEXT: HandlerDataInfo(
+                type=ChatDataType.HUMAN_TEXT,
+                definition=self.output_bundle_definitions[EngineChannelType.TEXT],
+                output_stream_config=_no_link,
+            ),
+        }
+        return HandlerDetail(inputs=inputs, outputs=outputs)
 
     # ------------------------------------------------------------------
     # Data routing: engine -> delegate output queues
@@ -392,16 +357,10 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
         if delegate is None:
             return
 
-        if inputs.type.channel_type == EngineChannelType.TEXT and delegate.upstream_mode == "rtc":
-            # RTC mode: route text to dedicated ws_text_queue to avoid
-            # competition with the RTC data-channel's process_chat_history.
-            delegate.ws_text_queue.put_nowait(inputs)
-            logger.debug(f"Routed {inputs.type} to ws_text_queue")
-        else:
-            data_queue = delegate.output_queues.get(inputs.type.channel_type)
-            if data_queue is not None:
-                data_queue.put_nowait(inputs)
-                logger.debug(f"Routed {inputs.type} to {inputs.type.channel_type} queue")
+        data_queue = delegate.output_queues.get(inputs.type.channel_type)
+        if data_queue is not None:
+            data_queue.put_nowait(inputs)
+            logger.debug(f"Routed {inputs.type} to {inputs.type.channel_type} queue")
 
     # ------------------------------------------------------------------
     # Signal routing: engine -> delegate signal queue
@@ -412,12 +371,6 @@ class WsLamClientHandler(_rtc_module.ClientHandlerRtc):
         context = cast(WsLamClientContext, context)
         if context.client_session_delegate is None:
             return
-
-        if signal.type == ChatSignalType.INTERRUPT:
-            if context.client_session_delegate._opus_encoder is not None:
-                context.client_session_delegate._opus_encoder.reset()
-                logger.debug("Opus encoder reset due to interrupt signal from engine")
-
         context.client_session_delegate.signal_to_client_queue.put_nowait(signal)
 
     # ------------------------------------------------------------------

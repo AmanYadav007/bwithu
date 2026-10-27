@@ -6,7 +6,6 @@ import weakref
 from types import ModuleType
 from typing import Optional, Dict, Tuple
 
-import gradio
 from fastapi import FastAPI
 from loguru import logger
 
@@ -19,7 +18,6 @@ from chat_engine.common.handler_base import HandlerBase
 from chat_engine.data_models.internal.handler_session_data import HandlerRegistry
 
 from chat_engine.data_models.chat_engine_config_data import HandlerBaseConfigModel, ChatEngineConfigModel
-from handlers.manager.manager_handler_base import ManagerHandlerBase
 
 
 class HandlerManager:
@@ -89,38 +87,27 @@ class HandlerManager:
             registry.base_info = base_info
             registry.handler = handler
             registry.handler_config = config
-            logger.info(f"Registered handler {name}({type(handler)}) with config: {config}")
+            shown = {k: ("***" if v and ("key" in k or "token" in k) else v) for k, v in config.model_dump().items()}
+            logger.info(f"Registered handler {name}({type(handler)}) with config: {shown}")
 
-    def load_handlers(self, engine_config: ChatEngineConfigModel,
-                      app: Optional[FastAPI] = None,
-                      ui: Optional[gradio.blocks.Block] = None,
-                      parent_block: Optional[gradio.blocks.Block] = None):
+    def load_handlers(self, engine_config: ChatEngineConfigModel, app: Optional[FastAPI] = None):
         enabled_handlers = self.get_enabled_handler_registries()
         client_handlers = []
-        manager_handlers = []
         for registry in enabled_handlers:
             if isinstance(registry.handler, ClientHandlerBase):
                 client_handlers.append(registry)
-            elif isinstance(registry.handler, ManagerHandlerBase):
-                manager_handlers.append(registry)
 
             load_start = time.monotonic()
             registry.handler.load(engine_config, registry.handler_config)
             dur_load = time.monotonic() - load_start
             logger.info(f"Handler {registry.base_info.name} loaded in {round(dur_load * 1e3)} milliseconds")
-        if app is not None or ui is not None:
+        if app is not None:
             for registry in client_handlers:
                 setup_start = time.monotonic()
-                registry.handler.on_setup_app(app, ui, parent_block)
+                registry.handler.on_setup_app(app)
                 dur_setup = time.monotonic() - setup_start
                 logger.info(
                     f"Setup client handler {registry.base_info.name} loaded in {round(dur_setup * 1e3)} milliseconds")
-            for registry in manager_handlers:
-                setup_start = time.monotonic()
-                registry.handler.on_setup_app(app, ui, parent_block)
-                dur_setup = time.monotonic() - setup_start
-                logger.info(
-                    f"Setup manager handler {registry.base_info.name} loaded in {round(dur_setup * 1e3)} milliseconds")
 
     def get_enabled_handler_registries(self, order_by_priority=True):
         result = []

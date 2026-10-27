@@ -27,25 +27,25 @@ class SileroVADConfigModel(HandlerBaseConfigModel, BaseModel):
     speaking_threshold: float = Field(default=0.5)
     start_delay: int = Field(default=2048)
     end_delay: int = Field(default=5000)
-    early_end_delay: int = Field(default=1500, description="早期结束检测阈值（样本数），用于触发首次 early_vad_end 事件")
-    early_end_repeat_delay: int = Field(default=3200, description="持续静音时重复发送 early_vad_end 的间隔（样本数），0 表示不重复")
+    early_end_delay: int = Field(default=1500, description="Silence (samples) before the first early_vad_end event")
+    early_end_repeat_delay: int = Field(default=3200, description="Interval (samples) between repeated early_vad_end events during silence; 0 = no repeat")
     buffer_look_back: int = Field(default=1024)
     prestart_fallback_threshold: int = Field(default=512)
     speech_padding: int = Field(default=512)
     volume_threshold: float = Field(default=-40)
-    # 重连机制配置
-    post_end_monitor_samples: int = Field(default=16000, description="判停后监控期长度（样本数），16000 = 1秒")
-    reconnect_threshold_samples: int = Field(default=8000, description="重连阈值（样本数），小于此值认为是误判")
-    # POST_END 能量检测阈值（dB），作为 VAD 模型的备份检测
-    # 当音频能量超过此阈值时，即使 VAD 模型没检测到语音，也认为有语音活动
-    post_end_energy_threshold: float = Field(default=-35, description="POST_END 期间能量检测阈值（dB），高于此值认为有语音")
+    # Reconnect (a turn end that turns out to be a pause)
+    post_end_monitor_samples: int = Field(default=16000, description="Monitoring period after a turn end (samples); 16000 = 1 s")
+    reconnect_threshold_samples: int = Field(default=8000, description="Reconnect threshold (samples): speech sooner than this means the turn end was wrong")
+    # POST_END energy threshold (dB), a backup to the VAD model:
+    # audio louder than this counts as speech even if the model missed it
+    post_end_energy_threshold: float = Field(default=-35, description="Energy threshold (dB) during POST_END; louder counts as speech")
 
 
 class SpeakingStatus(enum.Enum):
     PRE_START = enum.auto()
     START = enum.auto()
     END = enum.auto()
-    POST_END = enum.auto()  # 判停后监控期
+    POST_END = enum.auto()  # monitoring period after a turn end
 
 
 class HumanAudioVADContext(HandlerContext):
@@ -74,26 +74,26 @@ class HumanAudioVADContext(HandlerContext):
         self.agc: Optional[AutoGainControl] = None
 
         self.peak_volume = -100
-        self.current_db: float = -100  # 当前音频的能量（dB），用于 POST_END 的备份检测
+        self.current_db: float = -100  # energy of the current audio (dB), the POST_END backup check
 
         self.speech_id: int = 0
 
-        # EOU 协作相关状态
-        self.early_silence_length: int = 0  # 早期静音计数
-        self.early_vad_end_count: int = 0  # 当前 stream 已发送的 early_vad_end 次数
-        self.last_early_vad_end_at: int = 0  # 上次发送 early_vad_end 时的 early_silence_length
-        self.current_stream_id: Optional[ChatStreamIdentity] = None  # 跟踪当前 stream
-        self.candidate_end_received: bool = False  # 是否收到候选结束信号
+        # End-of-utterance (EOU) state
+        self.early_silence_length: int = 0  # early silence count
+        self.early_vad_end_count: int = 0  # early_vad_end events sent for the current stream
+        self.last_early_vad_end_at: int = 0  # early_silence_length when early_vad_end was last sent
+        self.current_stream_id: Optional[ChatStreamIdentity] = None  # the current stream
+        self.candidate_end_received: bool = False  # a candidate end signal was received
 
-        # 重连机制相关状态
-        self.post_end_counter: int = 0  # 监控期计数器
-        self.post_end_speech_counter: int = 0  # POST_END 期间累积的语音样本数（不会被静音重置）
-        self.last_stream_end_time: Optional[int] = None  # 上一个 stream 结束的时间戳（样本 ID）
-        self.previous_stream_audio: list = []  # 上一轮 stream 的完整音频缓冲（np.ndarray 列表）
-        self.previous_stream_id: Optional[ChatStreamIdentity] = None  # 上一个 stream 的 ID
-        self.current_stream_audio: list = []  # 当前 stream 的音频缓冲（用于重连时保存）
-        self.post_end_speech_audio: list = []  # POST_END 期间检测到的语音音频（重连时需要发送）
-        # 持久累积的音频缓冲，从说话开始到 POST_END 真正结束期间的所有 clips
+        # Reconnect state
+        self.post_end_counter: int = 0  # monitoring-period counter
+        self.post_end_speech_counter: int = 0  # speech samples seen during POST_END (not reset by silence)
+        self.last_stream_end_time: Optional[int] = None  # when the last stream ended (sample ID)
+        self.previous_stream_audio: list = []  # all audio of the previous stream (list of np.ndarray)
+        self.previous_stream_id: Optional[ChatStreamIdentity] = None  # ID of the previous stream
+        self.current_stream_audio: list = []  # audio of the current stream (kept for a reconnect)
+        self.post_end_speech_audio: list = []  # speech heard during POST_END (sent on reconnect)
+        # Audio kept from the start of speech until POST_END really ends
         self.accumulated_speech_audio: list = []
 
     def reset_model(self):
@@ -106,19 +106,19 @@ class HumanAudioVADContext(HandlerContext):
         self.speech_length = 0
         self.silence_length = 0
         self.slice_context.flush()
-        # 重置 EOU 协作相关状态
+        # Reset the EOU state
         self.early_silence_length = 0
         self.early_vad_end_count = 0
         self.last_early_vad_end_at = 0
         self.current_stream_id = None
         self.candidate_end_received = False
-        # 重置重连相关状态（注意：previous_stream_audio 和 previous_stream_id 不在这里重置，
-        # 因为它们需要保留到监控期结束或重连完成）
+        # Reset the reconnect state (previous_stream_audio and previous_stream_id are kept
+        # until the monitoring period ends or the reconnect is done)
         self.post_end_counter = 0
         self.current_stream_audio.clear()
 
     def reset_reconnect_state(self):
-        """重置重连相关状态，在监控期结束或重连完成后调用"""
+        """Reset the reconnect state; called when the monitoring period ends or a reconnect is done"""
         self.post_end_counter = 0
         self.post_end_speech_counter = 0
         self.last_stream_end_time = None
@@ -126,14 +126,14 @@ class HumanAudioVADContext(HandlerContext):
         self.previous_stream_id = None
         self.current_stream_audio.clear()
         self.post_end_speech_audio.clear()
-        # 只在 POST_END 真正结束时清空持久累积的音频
+        # Only clear the accumulated audio when POST_END really ends
         self.accumulated_speech_audio.clear()
 
     def _update_status_on_pre_start(self, clip: np.ndarray, _timestamp: Optional[int] = None):
         if self.speech_length >= self.config.start_delay:
             head_sample_id = None
             self.speaking_status = SpeakingStatus.START
-            # 重置 early_vad_end 相关状态，每个新 stream 都要能触发 early_vad_end
+            # Reset early_vad_end so every new stream can trigger it
             self.early_vad_end_count = 0
             self.last_early_vad_end_at = 0
             self.early_silence_length = 0
@@ -169,18 +169,18 @@ class HumanAudioVADContext(HandlerContext):
             return None, extra_args
 
     def _update_status_on_start(self, clip: np.ndarray, timestamp: Optional[int] = None):
-        # 检查是否满足结束条件：正常 end_delay 或收到候选结束信号
+        # End of turn? Either end_delay of silence or a candidate end signal
         should_end = (self.silence_length >= self.config.end_delay or 
                       self.candidate_end_received)
         
         if should_end:
-            # 进入 POST_END 状态，同时结束当前 stream（让 ASR 及时处理）
-            # 但会在 POST_END 期间继续监控，如果检测到新语音会 cancel 这个 stream
+            # Go to POST_END and end the current stream now (so ASR starts right away),
+            # but keep listening: new speech during POST_END cancels this stream
             self.speaking_status = SpeakingStatus.POST_END
             self.post_end_counter = 0
-            self.post_end_speech_counter = 0  # 重置累积的语音计数器
+            self.post_end_speech_counter = 0  # reset the speech counter
             self.last_stream_end_time = timestamp
-            self.post_end_speech_audio.clear()  # 清空 POST_END 期间的语音缓冲
+            self.post_end_speech_audio.clear()  # clear the POST_END speech buffer
             output_audio = np.concatenate(
                 [clip, np.zeros(self.config.speech_padding, dtype=clip.dtype)], axis=0)
             if self.candidate_end_received:
@@ -200,15 +200,15 @@ class HumanAudioVADContext(HandlerContext):
             return output_audio, extra_args
         else:
             extra_args = {"head_sample_id": timestamp}
-            # 检查是否需要发送 early_vad_end 事件
+            # Send an early_vad_end event?
             should_send_early_end = False
             
             if self.early_vad_end_count == 0:
-                # 首次：达到 early_end_delay 时发送
+                # first one: after early_end_delay
                 if self.early_silence_length >= self.config.early_end_delay:
                     should_send_early_end = True
             elif self.config.early_end_repeat_delay > 0:
-                # 后续：每隔 early_end_repeat_delay 再次发送
+                # then every early_end_repeat_delay
                 silence_since_last = self.early_silence_length - self.last_early_vad_end_at
                 if silence_since_last >= self.config.early_end_repeat_delay:
                     should_send_early_end = True
@@ -222,50 +222,50 @@ class HumanAudioVADContext(HandlerContext):
             return clip, extra_args
 
     def _update_status_on_post_end(self, clip: np.ndarray, timestamp: Optional[int] = None):
-        """POST_END 状态：判停后的监控期
+        """POST_END: the monitoring period after a turn end
         
-        Stream 已结束，但继续监听音频：
-        - 如果检测到新语音且时间间隔小于阈值，cancel 已结束的 stream 并重连
-        - 如果监控期超时，确认判停正确，清理状态
+        The stream has ended, but we keep listening:
+        - new speech within the threshold cancels the ended stream and reconnects
+        - if the period runs out, the turn end was right; clean up
         
-        语音检测使用双重机制：
-        1. VAD 模型检测 (speech_length > 0)
-        2. 能量检测 (current_db > post_end_energy_threshold) - 作为 VAD 模型的备份
+        Speech is detected two ways:
+        1. the VAD model (speech_length > 0)
+        2. energy (current_db > post_end_energy_threshold), a backup for the model
         """
         self.post_end_counter += self.clip_size
         
-        # 定期输出 POST_END 监控状态（每 0.5 秒一次）
+        # Log the POST_END state every 0.5 s
         if self.post_end_counter % 8000 == 0:  # 8000 samples = 0.5s
             progress_pct = (self.post_end_counter / self.config.post_end_monitor_samples) * 100
             logger.info(f"POST_END monitoring: {self.post_end_counter}/{self.config.post_end_monitor_samples} samples "
                        f"({progress_pct:.1f}%), speech_counter={self.post_end_speech_counter}, "
                        f"speech_length={self.speech_length}, current_db={self.current_db:.1f}dB")
         
-        # 在 POST_END 期间，使用双重机制检测语音：
-        # 1. VAD 模型检测
-        # 2. 能量检测作为备份（当 VAD 模型可能漏检时）
+        # During POST_END, detect speech two ways:
+        # 1. the VAD model
+        # 2. energy, in case the model misses it
         vad_detected = self.speech_length > 0
         energy_detected = self.current_db > self.config.post_end_energy_threshold
         
         if vad_detected or energy_detected:
             self.post_end_speech_counter += self.clip_size
             self.post_end_speech_audio.append(clip.copy())
-            self.accumulated_speech_audio.append(clip.copy())  # 持久累积
+            self.accumulated_speech_audio.append(clip.copy())  # kept until POST_END ends
             detection_source = "VAD" if vad_detected else "energy"
             if not vad_detected and energy_detected:
                 detection_source = f"energy({self.current_db:.1f}dB > {self.config.post_end_energy_threshold}dB)"
             logger.info(f"POST_END: speech detected by {detection_source}, accumulated {self.post_end_speech_counter} samples")
         
-        # 使用累积计数器检测新语音（而不是 speech_length）
+        # Use the accumulated counter (not speech_length) to detect new speech
         if self.post_end_speech_counter >= self.config.start_delay:
-            # 计算时间间隔
+            # Time since the turn ended
             time_gap = timestamp - self.last_stream_end_time if (timestamp is not None and self.last_stream_end_time is not None) else 0
             
             if time_gap < self.config.reconnect_threshold_samples:
-                # 时间间隔小于阈值，上次判停是错误的，需要 cancel 并重连
+                # Under the threshold: the turn end was wrong; cancel and reconnect
                 logger.info(f"Reconnection triggered! Time gap {time_gap} < threshold {self.config.reconnect_threshold_samples}")
                 self.speaking_status = SpeakingStatus.START
-                # 重置 early_vad_end 相关状态
+                # Reset early_vad_end
                 self.early_vad_end_count = 0
                 self.last_early_vad_end_at = 0
                 self.early_silence_length = 0
@@ -277,13 +277,13 @@ class HumanAudioVADContext(HandlerContext):
                 }
                 return clip, extra_args
             else:
-                # 时间间隔大于阈值，是新的独立语音，不需要重连
+                # Over the threshold: new, separate speech; no reconnect
                 logger.info(f"New speech detected but time gap {time_gap} >= threshold, starting new stream normally")
                 self.speaking_status = SpeakingStatus.PRE_START
                 self.reset_reconnect_state()
                 return None, {"new_speech_no_reconnect": True}
         
-        # 检查监控期是否超时（语音检测优先）
+        # Has the monitoring period run out? (speech is checked first)
         if self.post_end_counter >= self.config.post_end_monitor_samples:
             logger.info(f"POST_END monitoring period ended, confirming end was correct "
                        f"(accumulated speech: {self.post_end_speech_counter} samples, "
@@ -311,13 +311,13 @@ class HumanAudioVADContext(HandlerContext):
         if speech_prob > self.config.speaking_threshold:
             self.speech_length += self.clip_size
             self.silence_length = 0
-            self.early_silence_length = 0  # 有语音时重置早期静音计数
-            # 有语音时重置 early_vad_end 计数，允许下次停顿重新触发
+            self.early_silence_length = 0  # speech resets the early silence count
+            # and the early_vad_end count, so the next pause can trigger it again
             self.early_vad_end_count = 0
             self.last_early_vad_end_at = 0
         else:
             self.silence_length += self.clip_size
-            self.early_silence_length += self.clip_size  # 累积早期静音计数
+            self.early_silence_length += self.clip_size  # count early silence
             self.speech_length = 0
         if self.speaking_status == SpeakingStatus.PRE_START:
             return self._update_status_on_pre_start(clip, timestamp)
@@ -401,9 +401,9 @@ class HandlerAudioVAD(HandlerBase, ABC):
                 HandlerDataInfo(type=ChatDataType.HUMAN_AUDIO, definition=definition)
             ],
             signal_filters=[
-                # 监听针对 HUMAN_AUDIO 的 STREAM_END 信号（用于接收 EOU 的候选结束信号）
+                # Listen for STREAM_END on HUMAN_AUDIO (candidate end signals from EOU)
                 SignalFilterRule(ChatSignalType.STREAM_END, None, ChatDataType.HUMAN_AUDIO),
-                # 监听 CLIENT_PLAYBACK 流生命周期: STREAM_BEGIN 时暂停收音, STREAM_END 时恢复收音（单工模式）
+                # CLIENT_PLAYBACK lifecycle: pause listening on STREAM_BEGIN, resume on STREAM_END (half duplex)
                 SignalFilterRule(ChatSignalType.STREAM_BEGIN, None, ChatDataType.CLIENT_PLAYBACK),
                 SignalFilterRule(ChatSignalType.STREAM_END, None, ChatDataType.CLIENT_PLAYBACK),
                 SignalFilterRule(ChatSignalType.STREAM_CANCEL, None, ChatDataType.CLIENT_PLAYBACK),
@@ -430,10 +430,13 @@ class HandlerAudioVAD(HandlerBase, ABC):
         context = cast(HumanAudioVADContext, context)
         output_definition = output_definitions.get(ChatDataType.HUMAN_AUDIO).definition
         
-        # POST_END 状态下需要继续处理音频进行监控，不受播放状态限制
+        # During POST_END keep processing audio regardless of playback
         # BwithU: while the avatar talks, VAD is paused but we still keep the look-back history, so a
         # user who barges in is heard from their first word once the interrupt re-enables VAD.
-        input_paused = not context.input_enabled and context.speaking_status != SpeakingStatus.POST_END
+        # A user still speaking when the reply starts (they paused, the turn ended, and they went on) is heard to
+        # the end of what they're saying; pausing then cut them off mid-sentence and garbled the turn.
+        input_paused = not context.input_enabled and context.speaking_status not in (
+            SpeakingStatus.POST_END, SpeakingStatus.PRE_START, SpeakingStatus.START)
         if inputs.type != ChatDataType.MIC_AUDIO:
             return
 
@@ -459,7 +462,7 @@ class HandlerAudioVAD(HandlerBase, ABC):
         for clip in slice_data(context.slice_context, audio):
             rms = AudioUtils.get_rms(clip, self.weight_curve)
             db = AudioUtils.rms_to_db(rms)
-            context.current_db = db  # 保存当前能量，用于 POST_END 的备份检测
+            context.current_db = db  # keep the energy for the POST_END backup check
             if db > context.peak_volume:
                 context.peak_volume = db
             head_sample_id = context.slice_context.get_last_slice_start_index()
@@ -485,21 +488,21 @@ class HandlerAudioVAD(HandlerBase, ABC):
             timestamp = extra_args.get("head_sample_id", head_sample_id)
             speech_id = f"speech-{context.session_id}-{context.speech_id}"
             
-            # 处理进入 POST_END 状态：保存当前 stream 信息用于可能的 cancel
+            # Entering POST_END: keep the current stream so it can be cancelled
             if entering_post_end:
                 streamer = context.data_submitter.get_streamer(ChatDataType.HUMAN_AUDIO)
                 if streamer and streamer.current_stream:
                     context.previous_stream_id = streamer.current_stream.identity
-                # 将 current_stream_audio 复制到 previous_stream_audio
+                # copy current_stream_audio to previous_stream_audio
                 context.previous_stream_audio = context.current_stream_audio.copy()
                 context.current_stream_audio.clear()
                 logger.info(f"Entering POST_END, buffered {len(context.previous_stream_audio)} audio clips for potential reconnection")
             
-            # 处理重连触发：cancel 已结束的 stream 并发送缓冲的音频
+            # Reconnect: cancel the ended stream and send the buffered audio
             if reconnect_triggered:
                 self._handle_reconnection(context, output_definition, sample_rate, speech_id)
             
-            # 处理 POST_END 超时：确认判停正确
+            # POST_END timed out: the turn end was right
             if post_end_timeout:
                 logger.info("POST_END timeout, clearing reconnection buffers")
             
@@ -514,17 +517,17 @@ class HandlerAudioVAD(HandlerBase, ABC):
                 if context.agc is not None:
                     audio_clip = context.agc.apply_gain(audio_clip)
                 
-                # 在 START 状态时保存音频到缓冲（用于可能的重连）
+                # In START, buffer the audio (for a possible reconnect)
                 if context.speaking_status == SpeakingStatus.START or entering_post_end:
                     context.current_stream_audio.append(audio_clip.copy())
-                    context.accumulated_speech_audio.append(audio_clip.copy())  # 持久累积
+                    context.accumulated_speech_audio.append(audio_clip.copy())  # kept until POST_END ends
                 
                 output = DataBundle(output_definition)
                 output.set_main_data(np.expand_dims(audio_clip, axis=0))
                 for flag_name, flag_value in extra_args.items():
                     output.add_meta(flag_name, flag_value)
                 
-                # 如果检测到 early_vad_end，添加 Event
+                # Add an early_vad_end event if one fired
                 if extra_args.get("early_vad_end", False):
                     output.add_event_by_type(EventType.EVT_EARLY_VAD_END)
 
@@ -538,17 +541,17 @@ class HandlerAudioVAD(HandlerBase, ABC):
                     output_chat_data.timestamp = timestamp, sample_rate
                 context.submit_data(output_chat_data, finish_stream=output_chat_data.is_last_data)
                 
-                # 保存当前 stream ID 用于 signal 处理
+                # Keep the current stream ID for signal handling
                 streamer = context.data_submitter.get_streamer(ChatDataType.HUMAN_AUDIO)
                 if streamer and streamer.current_stream:
                     context.current_stream_id = streamer.current_stream.identity
 
     def _handle_reconnection(self, context: HumanAudioVADContext, output_definition: DataBundleDefinition,
                              sample_rate: int, speech_id: str):
-        """处理重连逻辑：cancel 已结束的 stream，发送缓冲的音频到新 stream"""
+        """Reconnect: cancel the ended stream and send the buffered audio to a new stream"""
         logger.info(f"Handling reconnection, cancelling previous stream and sending buffered audio")
         
-        # 1. Cancel 已结束的 stream（会级联 cancel 所有下游 stream）
+        # 1. Cancel the ended stream (cascades to every downstream stream)
         if context.previous_stream_id:
             streamer = context.data_submitter.get_streamer(ChatDataType.HUMAN_AUDIO)
             if streamer:
@@ -558,11 +561,11 @@ class HandlerAudioVAD(HandlerBase, ABC):
                 else:
                     logger.warning(f"Failed to cancel stream: {context.previous_stream_id}")
         
-        # 2. 重新启用 VAD（重连时直接恢复，不等 CLIENT_PLAYBACK STREAM_END）
+        # 2. Re-enable VAD right away (don't wait for CLIENT_PLAYBACK STREAM_END)
         context.input_enabled = True
         
-        # 3. 发送持久累积的音频到新 stream
-        # 使用 accumulated_speech_audio 确保所有音频都被发送，即使多次 reconnection
+        # 3. Send the accumulated audio to the new stream
+        # accumulated_speech_audio makes sure nothing is lost, even across several reconnects
         total_clips = len(context.accumulated_speech_audio)
         
         if context.accumulated_speech_audio:
@@ -581,7 +584,7 @@ class HandlerAudioVAD(HandlerBase, ABC):
         
         logger.info(f"Total {total_clips} buffered clips sent to new stream")
         
-        # 4. 清理临时状态，但保留 accumulated_speech_audio（只在 POST_END 真正结束时清空）
+        # 4. Clear temporary state but keep accumulated_speech_audio (cleared only when POST_END really ends)
         context.post_end_counter = 0
         context.post_end_speech_counter = 0
         context.last_stream_end_time = None
@@ -590,13 +593,13 @@ class HandlerAudioVAD(HandlerBase, ABC):
         context.current_stream_audio.clear()
         context.post_end_speech_audio.clear()
         
-        # 5. 重置 EOU 相关状态
+        # 5. Reset the EOU state
         context.early_vad_end_count = 0
         context.last_early_vad_end_at = 0
         context.candidate_end_received = False
 
     def on_signal(self, context: HandlerContext, signal: ChatSignal):
-        """处理信号：CLIENT_PLAYBACK 生命周期控制收音开关，EOU 候选结束信号"""
+        """Signals: CLIENT_PLAYBACK lifecycle switches listening on/off; EOU candidate end signals"""
         context = cast(HumanAudioVADContext, context)
 
         is_playback_stream = (signal.related_stream is not None
@@ -608,11 +611,11 @@ class HandlerAudioVAD(HandlerBase, ABC):
             context.input_enabled = False
             logger.debug(f"VAD input disabled by CLIENT_PLAYBACK STREAM_BEGIN from {signal.source_name}")
         elif signal.type == ChatSignalType.STREAM_END and not is_playback_stream and signal.is_candidate:
-            # 收到来自其他 handler 的候选结束信号
+            # A candidate end signal from another handler
             if (signal.related_stream and 
                 context.current_stream_id and
                 signal.related_stream.key == context.current_stream_id.key):
-                # 确认是针对当前 stream 的信号，标记收到候选结束信号
+                # It's for the current stream: mark it
                 context.candidate_end_received = True
                 logger.info(f"Received candidate STREAM_END signal from {signal.source_name} for stream {signal.related_stream}")
 

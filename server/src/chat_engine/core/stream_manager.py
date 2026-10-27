@@ -306,12 +306,12 @@ class ChatStream:
             storage.unref_stream(self.identity, source_stream)
 
     def cancel(self, storage: "StreamStorage"):
-        # 已经 cancel 的不能重复 cancel
+        # A cancelled stream cannot be cancelled again
         if self.status == ChatStreamStatus.CANCELLED:
             return False
-        # 允许 cancel 任何非 CANCELLED 状态的 stream
-        # 即使 ENDED 且无下游引用，也需要发送 STREAM_CANCEL 信号
-        # 因为可能有 handler 正在处理这个 stream（如 LLM 正在处理 HUMAN_TEXT）
+        # Any stream that is not CANCELLED can be cancelled,
+        # even an ENDED one with no downstream references: STREAM_CANCEL must still go out
+        # because a handler may still be working on it (e.g. the LLM on HUMAN_TEXT)
         prev_status = self.status
         self.status = ChatStreamStatus.CANCELLED
         ref_by_list = [str(sid) for sid in self.ref_by.values()]
@@ -1096,7 +1096,7 @@ class ChatDataSubmitter:
             return
         data_type = None
         streamers = None
-        stream_data = data  # 实际要流式传输的数据
+        stream_data = data  # the data actually streamed
         if len(self.streamers) == 1:
             data_type = list(self.streamers.keys())[0]
             streamers = self.get_streamers(data_type)
@@ -1117,7 +1117,7 @@ class ChatDataSubmitter:
                 raise ValueError(msg)
             data_type = chat_data_type
             streamers = self.get_streamers(data_type)
-            stream_data = raw_data  # 使用提取的原始数据
+            stream_data = raw_data  # the extracted raw data
         else:
             msg = f"Unsupported chat data with type {type(data)}"
             raise ValueError(msg)

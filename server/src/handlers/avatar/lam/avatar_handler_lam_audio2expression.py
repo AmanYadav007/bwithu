@@ -25,6 +25,9 @@ from engine_utils.directory_info import DirectoryInfo
 from engine_utils.general_slicer import SliceContext, slice_data
 from chat_engine.data_models.chat_stream_config import ChatStreamConfig
 
+# Seconds of audio a reply's first motion chunk needs (later chunks are one second).
+FIRST_SLICE_S = 0.5
+
 
 class AvatarLAMConfig(HandlerBaseConfigModel, BaseModel):
     model_name: str = "LAM_audio2exp"
@@ -42,6 +45,7 @@ class AvatarLAMContext(HandlerContext):
         self.inference_context = None
         self.input_slice_context: Optional[SliceContext] = None
         self.active_stream_keys: Set[StreamKey] = set()
+        self.speaking_keys: Set[StreamKey] = set()  # streams whose first motion has gone out
 
 
 class HandlerAvatarLAM(HandlerBase):
@@ -179,6 +183,12 @@ class HandlerAvatarLAM(HandlerBase):
         audio_segments = queue.Queue()
         for audio_segment in slice_data(context.input_slice_context, audio.squeeze()):
             audio_segments.put_nowait(audio_segment)
+        # BwithU: the avatar starts moving (and the client playing) only with the first motion chunk. Rather than wait
+        # for a full one-second slice, start a reply on its first half second.
+        remainder = context.input_slice_context.last_remainder
+        if (not is_last and audio_segments.empty() and stream_key not in context.speaking_keys
+                and remainder is not None and remainder.shape[0] >= context.config.audio_sample_rate * FIRST_SLICE_S):
+            audio_segments.put_nowait(context.input_slice_context.flush())
         if is_last:
             end_segment = context.input_slice_context.flush()
             if end_segment is not None:
@@ -220,8 +230,10 @@ class HandlerAvatarLAM(HandlerBase):
             logger.info(f"Inference on {audio_segment.shape[-1] / context.config.audio_sample_rate:.2f} second audio "
                         f"finished in {dur_inference * 1000} milliseconds. Got output: {str(output)}")
             streamer.stream_data(output, finish_stream=is_last)
+            context.speaking_keys.add(stream_key)
         if stream_key and is_last:
             context.active_stream_keys.discard(stream_key)
+            context.speaking_keys.discard(stream_key)
 
     def on_signal(self, context: HandlerContext, signal: ChatSignal):
         context = cast(AvatarLAMContext, context)
@@ -229,6 +241,7 @@ class HandlerAvatarLAM(HandlerBase):
             stream_key = signal.related_stream.stream_key_str
             if stream_key is not None and stream_key in context.active_stream_keys:
                 context.active_stream_keys.discard(stream_key)
+                context.speaking_keys.discard(stream_key)
                 logger.info(f"LAM: Removed stream {stream_key} from active set")
 
     def destroy_context(self, context: HandlerContext):

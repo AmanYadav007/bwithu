@@ -10,8 +10,6 @@ server/.venv/
 server/models/
 server/logs/
 server/temp/
-server/ssl_certs/*.crt
-server/ssl_certs/*.key
 server/dump_*.pcm
 server/exp/
 web/e2e/fixtures/

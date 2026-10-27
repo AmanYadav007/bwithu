@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 
-import { AVATARS, DEFAULT_COMPANION, LEGACY_VOICES, VIBES, VOICES, type Companion } from '@/config/companion'
+import { AVATARS, DEFAULT_COMPANION, LANGUAGES, LEGACY_VOICES, VIBES, VOICES, type Companion } from '@/config/companion'
 
 const STORAGE_KEY = 'bwithu.companion'
 
@@ -16,6 +16,7 @@ function load(): Companion | null {
       avatar: AVATARS.some((a) => a.id === saved.avatar) ? saved.avatar! : DEFAULT_COMPANION.avatar,
       vibe: VIBES.some((v) => v.id === saved.vibe) ? saved.vibe! : DEFAULT_COMPANION.vibe,
       voice: VOICES.some((v) => v.id === voice) ? voice! : DEFAULT_COMPANION.voice,
+      language: LANGUAGES.some((l) => l.id === saved.language) ? saved.language! : DEFAULT_COMPANION.language,
     }
   } catch {
     return null

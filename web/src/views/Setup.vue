@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 
 import Logo from '@/components/Logo.vue'
-import { AVATARS, VIBES, VOICES, type Companion, type VoiceId } from '@/config/companion'
+import { AVATARS, LANGUAGES, VIBES, VOICES, type Companion, type VoiceId } from '@/config/companion'
 import { useCompanionStore } from '@/store/companion'
 
 const emit = defineEmits<{ done: [] }>()
@@ -77,6 +77,17 @@ function submit() {
             <input v-model="draft.vibe" type="radio" name="vibe" :value="v.id" />
             <strong>{{ v.label }}</strong>
             <small>{{ v.hint }}</small>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>You'll speak</legend>
+        <div class="chips">
+          <label v-for="l in LANGUAGES" :key="l.id" :class="['chip', { on: draft.language === l.id }]">
+            <input v-model="draft.language" type="radio" name="language" :value="l.id" />
+            <strong>{{ l.label }}</strong>
+            <small>{{ l.hint }}</small>
           </label>
         </div>
       </fieldset>

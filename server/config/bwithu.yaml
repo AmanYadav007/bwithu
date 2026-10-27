@@ -1,53 +1,69 @@
-# BwithU production pipeline:
-#   browser mic --WS--> Silero VAD --> Qwen-Omni realtime (hears, thinks, speaks)
-#   --> LAM audio2expression (lip/face motion) --WS--> browser renders 3D head.
-# No GPU, no WebRTC/TURN. Needs DASHSCOPE_API_KEY.
+# BwithU pipeline:
+#   browser mic --WS--> Silero VAD --> Groq Whisper ASR (SenseVoice fallback) --> OpenAI-compatible LLM
+#   --> Edge TTS --> LAM audio2expression (lip/face motion) --WS--> browser renders the 3D head.
+# Set LLM_API_KEY / LLM_API_URL / LLM_MODEL in the root .env.
 default:
   logger:
     log_level: "INFO"
   service:
-    host: "0.0.0.0"
+    host: "127.0.0.1"
     port: 8282
   chat_engine:
     model_root: "models"
-    concurrent_limit: 10
+    concurrent_limit: 5
     handler_search_path:
       - "src/handlers"
     handler_configs:
       LamClient:
         module: client/ws_lam_client/ws_lam_client_handler
         asset_path: "lam_samples/james.zip"
-        connection_ttl: 900
-        upstream_mode: 'ws'
       InterruptHandler:
         module: logic/interrupt/interrupt_handler
       SileroVad:
         module: vad/silerovad/vad_handler_silero
         speaking_threshold: 0.3
         start_delay: 2048
-        end_delay: 8000          # 0.5 s of silence ends the turn
-        buffer_look_back: 12000  # 0.75 s pre-roll, also recovers the start of a barge-in
+        end_delay: 6400          # 0.4 s of silence ends the turn (the LLM merges a turn cut off by a pause)
+        buffer_look_back: 24000  # 1.5 s pre-roll, also recovers the words spoken before a barge-in registers
         speech_padding: 512
         volume_threshold: -35
-      QwenOmni:
-        module: llm/qwen_omni/llm_handler_qwen_omni
-        model_name: "qwen3.5-omni-flash-realtime"
-        voice: "Tina"  # model default
-        enable_video_input: false
-        enable_text_output: true
-        input_audio_format: "PCM_16000HZ_MONO_16BIT"
-        output_audio_format: "PCM_24000HZ_MONO_16BIT"
-        enable_turn_detection: false
-        enable_input_transcription: false
-        # Per-call instructions come from src/bwithu/persona.py (name / vibe chosen in the web app).
-        # Client voice ids (web/src/config/companion.ts VOICES) -> Qwen voices. Unverified for
-        # qwen3.5-omni-flash (only one known male voice); check with scripts/qwen_check.py.
+      ASR:
+        enabled: True
+        # Whisper on Groq (GROQ_API_KEY or LLM_API_KEY); local SenseVoice is the fallback.
+        module: asr/groq_whisper/asr_handler_groq_whisper
+        model_name: "iic/SenseVoiceSmall"
+      Edge_TTS:
+        enabled: True
+        module: tts/edgetts/tts_handler_edgetts
+        voice: "en-US-AvaMultilingualNeural"
+        # Client voice ids (web/src/config/companion.ts VOICES) -> Edge voices.
         voices:
-          ava: "Tina"
-          emma: "Cherry"
-          neerja: "Serena"
-          andrew: "Ethan"
-          brian: "Ethan"
-          prabhat: "Ethan"
+          ava: "en-US-AvaMultilingualNeural"
+          emma: "en-US-EmmaMultilingualNeural"
+          neerja: "en-IN-NeerjaExpressiveNeural"
+          andrew: "en-US-AndrewMultilingualNeural"
+          brian: "en-US-BrianMultilingualNeural"
+          prabhat: "en-IN-PrabhatNeural"
+        # Hindi (Devanagari) replies: the voices above can't read it (the Indian English ones return no audio,
+        # the Multilingual ones take 3-5 s), so each switches to the native Hindi voice of the same gender.
+        hindi_voices:
+          ava: "hi-IN-SwaraNeural"
+          emma: "hi-IN-SwaraNeural"
+          neerja: "hi-IN-SwaraNeural"
+          andrew: "hi-IN-MadhurNeural"
+          brian: "hi-IN-MadhurNeural"
+          prabhat: "hi-IN-MadhurNeural"
+      LLMOpenAICompatible:
+        enabled: True
+        module: llm/openai_compatible/llm_handler_openai_compatible
+        history_length: 20
+        extra_body:
+          reasoning_effort: "none"
+        # Hindi turns: gpt-oss-20b writes natural, grammatical Hindi (qwen3.8's is often wrong) and answers in
+        # ~170 ms without the multi-second stalls gpt-oss-120b has now and then.
+        hindi_model_name: "openai/gpt-oss-20b"
+        hindi_extra_body:
+          reasoning_effort: "low"
+        # The system prompt comes from src/bwithu/persona.py.
       LAM_Driver:
         module: avatar/lam/avatar_handler_lam_audio2expression

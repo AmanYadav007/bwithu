@@ -36,7 +36,7 @@ class ChatEngine(object):
 
         self.sessions: Dict[str, ChatSession] = {}
 
-    def initialize(self, engine_config: ChatEngineConfigModel, app=None, ui=None, parent_block=None):
+    def initialize(self, engine_config: ChatEngineConfigModel, app=None):
         if self.states.inited:
             return
 
@@ -62,7 +62,7 @@ class ChatEngine(object):
             engine_config.model_root = os.path.join(DirectoryInfo.get_project_dir(), engine_config.model_root)
         self.handler_manager.initialize(engine_config)
         self.logic_manager.initialize(engine_config)
-        self.handler_manager.load_handlers(engine_config, app, ui, parent_block)
+        self.handler_manager.load_handlers(engine_config, app)
         self.logic_manager.load_logics(engine_config)
         self.states.inited = True
 

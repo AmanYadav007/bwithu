@@ -13,7 +13,7 @@ def import_class(module_name: str, base_class: type, search_paths: List[str]):
         find_path = os.path.join(search_path, f"{module_name}.py")
         if os.path.exists(find_path):
             module_path = find_path
-            module_import_path = module_name.replace("\/", ".").replace("/", ".")
+            module_import_path = module_name.replace("/", ".")
             break
     if module_path is None:
         raise ValueError(f"Module {module_name} not found in search path.")

@@ -1,6 +1,6 @@
 """
-WebSocket 消息协议定义
-定义所有 JSON 消息的 Pydantic 模型
+WebSocket message protocol
+Pydantic models for every JSON message
 """
 import time
 from typing import Optional, Dict, Any, List
@@ -10,20 +10,19 @@ from loguru import logger
 
 
 # ============================================================================
-# 基础结构
+# Base structures
 # ============================================================================
 
 class MessageType(str, Enum):
-    """消息类型枚举"""
-    # 输入端口 - 客户端消息
+    """Message types"""
+    # Input port - client messages
     INITIALIZE_AVATAR_SESSION = "InitializeAvatarSession"
     SEND_HUMAN_AUDIO = "SendHumanAudio"
-    SEND_HUMAN_VIDEO = "SendHumanVideo"
     SEND_HUMAN_TEXT = "SendHumanText"
     TRIGGER_HEARTBEAT = "TriggerHeartbeat"
     INTERRUPT = "Interrupt"
     
-    # 输入端口 - 服务器消息
+    # Input port - server messages
     AVATAR_SESSION_INITIALIZED = "AvatarSessionInitialized"
     ECHO_HUMAN_TEXT = "EchoHumanText"
     ECHO_AVATAR_TEXT = "EchoAvatarText"
@@ -34,215 +33,177 @@ class MessageType(str, Enum):
     CHAT_SIGNAL = "ChatSignal"
     ERROR = "Error"
     
-    # 输出端口 - 服务器消息
+    # Output port - server messages
     MOTION_DATA = "MotionData"
     MOTION_DATA_WELCOME = "MotionDataWelcome"
     
-    # 输入端口 - 渲染器消息
+    # Input port - renderer messages
     END_SPEECH = "EndSpeech"
 
 class MessageHeader(BaseModel):
-    """消息头部"""
+    """Message header"""
     name: MessageType
-    request_id: str = Field(..., description="请求ID")
+    request_id: str = Field(..., description="Request ID")
 
 
 class BaseMessage(BaseModel):
-    """基础消息结构"""
+    """Base message"""
     header: MessageHeader
     payload: Optional[Dict[str, Any]] = Field(default=None)
 
 
 # ============================================================================
-# 输入端口 - 客户端 → 服务器消息
+# Input port - client -> server messages
 # ============================================================================
 
-class AudioFormat(str, Enum):
-    """音频格式枚举"""
-    PCM = "PCM"
-    OPUS = "OPUS"
-
-
 class AudioConfig(BaseModel):
-    """音频配置"""
-    format: str = Field(default="PCM", description="音频格式: PCM 或 OPUS")
-    sample_rate: int = Field(default=16000, description="采样率")
-    channels: int = Field(default=1, description="通道数")
-    
-    # Opus 特有配置
-    opus_frame_size_ms: Optional[int] = Field(
-        default=20, 
-        description="Opus 每帧时长(毫秒)，仅当 format=OPUS 时有效"
-    )
+    """Audio config"""
+    format: str = Field(default="PCM", description="Audio format (only PCM)")
+    sample_rate: int = Field(default=16000, description="Sample rate")
+    channels: int = Field(default=1, description="Channel count")
 
 
 class InitializeAvatarSessionPayload(BaseModel):
-    """初始化会话载荷"""
+    """InitializeAvatarSession payload"""
     audio: AudioConfig
-    subscriptions: Optional[List[str]] = Field(default=None, description="需要订阅的下行内容列表")
+    subscriptions: Optional[List[str]] = Field(default=None, description="Downstream content to subscribe to")
 
 
 class InitializeAvatarSession(BaseModel):
-    """初始化数字人会话"""
+    """Initialize the avatar session"""
     header: MessageHeader
     payload: InitializeAvatarSessionPayload
 
 
 class BinaryDataInfo(BaseModel):
-    """二进制数据信息"""
-    binary_size: int = Field(..., description="二进制数据总大小")
-    segment_num: int = Field(..., description="分段数量")
+    """Binary data info"""
+    binary_size: int = Field(..., description="Total binary size")
+    segment_num: int = Field(..., description="Number of segments")
 
 
 class SendHumanAudioPayload(BaseModel):
-    """发送音频数据载荷"""
-    transport: str = Field(default="binary", description="传输方式: binary/base64")
-    binary_size: Optional[int] = Field(default=None, description="binary 模式下的二进制总大小")
-    segment_num: Optional[int] = Field(default=None, description="binary 模式下的二进制帧数量")
-    data_base64: Optional[str] = Field(default=None, description="base64 数据")
-    
-    # 音频格式相关（用于运行时覆盖会话配置）
-    format: Optional[str] = Field(default=None, description="音频格式: PCM 或 OPUS，不指定则使用会话配置")
+    """SendHumanAudio payload"""
+    transport: str = Field(default="binary", description="Transport: binary/base64")
+    binary_size: Optional[int] = Field(default=None, description="Total binary size (binary transport)")
+    segment_num: Optional[int] = Field(default=None, description="Number of binary frames (binary transport)")
+    data_base64: Optional[str] = Field(default=None, description="base64 data")
 
 
 class SendHumanAudio(BaseModel):
-    """发送用户音频数据"""
+    """User audio"""
     header: MessageHeader
     payload: SendHumanAudioPayload
 
 
-class SendHumanVideoPayload(BaseModel):
-    """发送视频数据载荷"""
-    width: int = Field(..., description="视频宽度")
-    height: int = Field(..., description="视频高度")
-    format: str = Field(default="JPEG", description="视频格式")
-    transport: str = Field(default="binary", description="传输方式: binary/base64")
-    binary_size: Optional[int] = Field(default=None, description="binary 模式下的二进制总大小")
-    segment_num: Optional[int] = Field(default=None, description="binary 模式下的二进制帧数量")
-    data_base64: Optional[str] = Field(default=None, description="base64 数据")
-
-
-class SendHumanVideo(BaseModel):
-    """发送用户视频数据"""
-    header: MessageHeader
-    payload: SendHumanVideoPayload
-
-
 class SendHumanTextPayload(BaseModel):
-    """发送文本数据载荷"""
-    stream_key: str = Field(..., description="流的唯一标识，格式为 stream_{builder_id}_{stream_id}")
-    mode: str = Field(default="increment", description="文本模式: increment/full_text")
-    text: str = Field(..., description="文本内容")
-    end_of_speech: bool = Field(..., description="是否结束")
+    """SendHumanText payload"""
+    stream_key: str = Field(..., description="Unique stream key: stream_{builder_id}_{stream_id}")
+    mode: str = Field(default="increment", description="Text mode: increment/full_text")
+    text: str = Field(..., description="Text")
+    end_of_speech: bool = Field(..., description="Is this the end?")
 
 
 class SendHumanText(BaseModel):
-    """发送用户文本数据"""
+    """User text"""
     header: MessageHeader
     payload: SendHumanTextPayload
 
 
 class TriggerHeartbeat(BaseModel):
-    """触发心跳"""
+    """Heartbeat"""
     header: MessageHeader
 
 
 class Interrupt(BaseModel):
-    """打断信号"""
+    """Interrupt"""
     header: MessageHeader
 
 
 # ============================================================================
-# 输入端口 - 服务器 → 客户端消息
+# Input port - server -> client messages
 # ============================================================================
 
 class AvatarSessionInitialized(BaseModel):
-    """会话初始化完成"""
+    """Session initialized"""
     header: MessageHeader
 
 
 class EchoTextPayload(BaseModel):
-    """文本回显载荷"""
-    stream_key: Optional[str] = Field(default=None, description="流的唯一标识，格式为 stream_{builder_id}_{stream_id}")
-    mode: str = Field(default="increment", description="文本模式: increment/full_text")
-    text: str = Field(..., description="文本内容")
-    end_of_speech: bool = Field(..., description="是否结束")
+    """Text echo payload"""
+    stream_key: Optional[str] = Field(default=None, description="Unique stream key: stream_{builder_id}_{stream_id}")
+    mode: str = Field(default="increment", description="Text mode: increment/full_text")
+    text: str = Field(..., description="Text")
+    end_of_speech: bool = Field(..., description="Is this the end?")
     metadata: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="附加元数据，包含 handler 添加的自定义信息（如 task_id）"
+        description="Extra metadata added by handlers (e.g. task_id)"
     )
 
 
 class EchoHumanText(BaseModel):
-    """回显用户文本(ASR结果)"""
+    """Echo of the user's text (ASR result)"""
     header: MessageHeader
     payload: EchoTextPayload
 
 
 class EchoAvatarText(BaseModel):
-    """回显数字人文本(LLM结果)"""
+    """Echo of the avatar's text (LLM result)"""
     header: MessageHeader
     payload: EchoTextPayload
 
 
 class EchoAvatarAudioPayload(BaseModel):
-    """回显数字人音频载荷"""
-    stream_key: Optional[str] = Field(default=None, description="流的唯一标识，格式为 stream_{builder_id}_{stream_id}")
-    transport: str = Field(default="binary", description="传输方式: binary/base64")
-    binary_size: Optional[int] = Field(default=None, description="binary 模式下的二进制总大小")
-    segment_num: Optional[int] = Field(default=None, description="binary 模式下的二进制帧数量")
-    format: str = Field(default="PCM", description="音频格式: PCM 或 OPUS")
-    sample_rate: int = Field(default=24000, description="音频采样率")
-    channels: int = Field(default=1, description="音频通道数")
-    data_base64: Optional[str] = Field(default=None, description="base64 数据")
-    end_of_speech: bool = Field(default=False, description="本段音频是否结束")
+    """Avatar audio payload"""
+    stream_key: Optional[str] = Field(default=None, description="Unique stream key: stream_{builder_id}_{stream_id}")
+    transport: str = Field(default="binary", description="Transport: binary/base64")
+    binary_size: Optional[int] = Field(default=None, description="Total binary size (binary transport)")
+    segment_num: Optional[int] = Field(default=None, description="Number of binary frames (binary transport)")
+    format: str = Field(default="PCM", description="Audio format (only PCM)")
+    sample_rate: int = Field(default=24000, description="Audio sample rate")
+    channels: int = Field(default=1, description="Audio channel count")
+    data_base64: Optional[str] = Field(default=None, description="base64 data")
+    end_of_speech: bool = Field(default=False, description="Is this the end of the audio segment?")
     
-    # Opus 特有字段
-    opus_frame_size_ms: Optional[int] = Field(
-        default=None, 
-        description="Opus 每帧时长(毫秒)，仅当 format=OPUS 时有效"
-    )
-    
-    # 扩展元数据（如 task_id 等）
+    # Extra metadata (e.g. task_id)
     metadata: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="附加元数据，包含 handler 添加的自定义信息（如 task_id）"
+        description="Extra metadata added by handlers (e.g. task_id)"
     )
 
 
 class EchoAvatarAudio(BaseModel):
-    """回显数字人音频(TTS结果)"""
+    """Avatar audio (TTS result)"""
     header: MessageHeader
     payload: EchoAvatarAudioPayload
 
 
 class AvatarHeartbeat(BaseModel):
-    """心跳响应"""
+    """Heartbeat response"""
     header: MessageHeader
 
 
 class InterruptAcceptedPayload(BaseModel):
-    """打断已接受载荷"""
-    target_stream_id: Optional[str] = Field(default=None, description="被打断的 AVATAR_AUDIO stream ID")
-    stream_key: Optional[str] = Field(default=None, description="流的唯一标识，格式为 stream_{builder_id}_{stream_id}")
+    """InterruptAccepted payload"""
+    target_stream_id: Optional[str] = Field(default=None, description="ID of the interrupted AVATAR_AUDIO stream")
+    stream_key: Optional[str] = Field(default=None, description="Unique stream key: stream_{builder_id}_{stream_id}")
 
 
 class InterruptAccepted(BaseModel):
-    """打断已接受"""
+    """Interrupt accepted"""
     header: MessageHeader
     payload: Optional[InterruptAcceptedPayload] = Field(default=None)
 
 
 class InterruptNotificationPayload(BaseModel):
-    """服务端打断通知载荷（用于无 Motion Data 场景）"""
-    target_stream_id: str = Field(..., description="被打断的 AVATAR_AUDIO stream ID (deprecated: 使用 stream_key 替代)")
-    stream_key: Optional[str] = Field(default=None, description="流的唯一标识，格式为 stream_{builder_id}_{stream_id}")
-    reason: str = Field(default="user_interrupt", description="打断原因: user_interrupt | semantic_interrupt")
-    interrupted_at: float = Field(default_factory=time.time, description="打断时间戳")
+    """Server-side interrupt notification payload (when there is no motion data)"""
+    target_stream_id: str = Field(..., description="ID of the interrupted AVATAR_AUDIO stream (deprecated: use stream_key)")
+    stream_key: Optional[str] = Field(default=None, description="Unique stream key: stream_{builder_id}_{stream_id}")
+    reason: str = Field(default="user_interrupt", description="Reason: user_interrupt | semantic_interrupt")
+    interrupted_at: float = Field(default_factory=time.time, description="Interrupt timestamp")
 
 
 class InterruptNotification(BaseModel):
-    """服务端打断通知（用于无 Motion Data 场景）"""
+    """Server-side interrupt notification (when there is no motion data)"""
     header: MessageHeader
     payload: InterruptNotificationPayload
 
@@ -251,25 +212,24 @@ class ChatSignalPayload(BaseModel):
     timestamp: float = Field(default_factory=time.time)
     type: str
     source_type: str
-    stream_type: Optional[str] = Field(default=None, description="流类型")
-    stream_producer: Optional[str] = Field(default=None, description="流来源")
-    stream_key: Optional[str] = Field(default=None, description="流的唯一标识，格式为 stream_{builder_id}_{stream_id}")
-    parent_stream_keys: Optional[List[str]] = Field(default=None, description="父级流的 stream_key 列表（仅 STREAM_BEGIN 信号包含，包含所有直接父级，不包含祖父级）")
-    signal_data: Optional[Dict] = Field(default=None, description="信号数据")
+    stream_type: Optional[str] = Field(default=None, description="Stream type")
+    stream_producer: Optional[str] = Field(default=None, description="Stream producer")
+    stream_key: Optional[str] = Field(default=None, description="Unique stream key: stream_{builder_id}_{stream_id}")
+    parent_stream_keys: Optional[List[str]] = Field(default=None, description="stream_keys of the direct parent streams (STREAM_BEGIN only; no grandparents)")
+    signal_data: Optional[Dict] = Field(default=None, description="Signal data")
 
 
 class ChatSignalMessage(BaseModel):
-    """监听到的信号"""
+    """A signal forwarded to the client"""
     header: MessageHeader
     payload: ChatSignalPayload
 
 
 
 class ErrorCode(str, Enum):
-    """错误码"""
+    """Error codes"""
     INVALID_SESSION = "INVALID_SESSION"
     AUDIO_FORMAT_ERROR = "AUDIO_FORMAT_ERROR"
-    VIDEO_FORMAT_ERROR = "VIDEO_FORMAT_ERROR"
     HEARTBEAT_TIMEOUT = "HEARTBEAT_TIMEOUT"
     INTERNAL_ERROR = "INTERNAL_ERROR"
     RATE_LIMIT = "RATE_LIMIT"
@@ -278,85 +238,84 @@ class ErrorCode(str, Enum):
 
 
 class ErrorPayload(BaseModel):
-    """错误载荷"""
-    code: str = Field(..., description="错误码")
-    message: str = Field(..., description="错误消息")
+    """Error payload"""
+    code: str = Field(..., description="Error code")
+    message: str = Field(..., description="Error message")
 
 
 class Error(BaseModel):
-    """错误消息"""
+    """Error"""
     header: MessageHeader
     payload: ErrorPayload
 
 
 # ============================================================================
-# 输出端口 - 服务器 → 渲染器消息
+# Output port - server -> renderer messages
 # ============================================================================
 
 class MotionDataPayload(BaseModel):
-    """Motion Data 载荷"""
-    stream_key: Optional[str] = Field(default=None, description="流的唯一标识，格式为 stream_{builder_id}_{stream_id}")
+    """Motion data payload"""
+    stream_key: Optional[str] = Field(default=None, description="Unique stream key: stream_{builder_id}_{stream_id}")
     motion_data: BinaryDataInfo
-    end_of_speech: bool = Field(..., description="是否结束")
+    end_of_speech: bool = Field(..., description="Is this the end?")
 
 
 class MotionDataMessage(BaseModel):
-    """Motion Data 消息"""
+    """Motion data"""
     header: MessageHeader
     payload: MotionDataPayload
 
 
 # ============================================================================
-# 输入端口 - 渲染器 → 服务器消息
+# Input port - renderer -> server messages
 # ============================================================================
 
 class EndSpeechPayload(BaseModel):
-    """EndSpeech 载荷"""
-    stream_key: str = Field(..., description="流的唯一标识，格式为 stream_{builder_id}_{stream_id}")
+    """EndSpeech payload"""
+    stream_key: str = Field(..., description="Unique stream key: stream_{builder_id}_{stream_id}")
 
 
 class EndSpeech(BaseModel):
-    """渲染端播放完毕"""
+    """The renderer finished playing"""
     header: MessageHeader
     payload: EndSpeechPayload
 
 
 # ============================================================================
-# 工具函数
+# Helpers
 # ============================================================================
 
 def parse_message(json_data: dict) -> Optional[BaseMessage]:
     """
-    解析 JSON 消息
+    Parse a JSON message
     
     Args:
-        json_data: JSON 字典
+        json_data: JSON dict
         
     Returns:
-        解析后的消息对象,如果解析失败返回 None
+        The parsed message, or None if parsing fails
     """
     try:
         if "header" not in json_data:
-            logger.warning("JSON消息缺少header字段")
+            logger.warning("JSON message has no header")
             return None
         
         message_name = json_data["header"].get("name")
         if not message_name:
-            logger.warning("JSON消息header中缺少name字段")
+            logger.warning("JSON message header has no name")
             return None
         
-        # 直接通过枚举查找消息类型
+        # Look the message type up in the enum
         try:
             message_type = MessageType(message_name)
         except ValueError:
-            logger.warning(f"未知的消息类型: {message_name}")
+            logger.warning(f"Unknown message type: {message_name}")
             return None
         
-        # 根据消息类型直接获取对应的类
+        # Get the class for the message type
         message_class_map = {
             MessageType.INITIALIZE_AVATAR_SESSION: InitializeAvatarSession,
             MessageType.SEND_HUMAN_AUDIO: SendHumanAudio,
-            MessageType.SEND_HUMAN_VIDEO: SendHumanVideo,
             MessageType.SEND_HUMAN_TEXT: SendHumanText,
             MessageType.TRIGGER_HEARTBEAT: TriggerHeartbeat,
             MessageType.INTERRUPT: Interrupt,
@@ -374,24 +333,24 @@ def parse_message(json_data: dict) -> Optional[BaseMessage]:
         
         message_class = message_class_map.get(message_type)
         if message_class is None:
-            logger.error(f"消息类型 {message_type} 没有对应的处理类")
+            logger.error(f"No class for message type {message_type}")
             return None
         
         return message_class.model_validate(json_data)
     except Exception as e:
-        logger.error(f"解析JSON消息时发生异常: {e}", exc_info=True)
+        logger.error(f"Error parsing JSON message: {e}", exc_info=True)
         return None
 
 
 def serialize_message(message: BaseMessage) -> dict:
     """
-    序列化消息为 JSON 字典
+    Serialize a message to a JSON dict
     
     Args:
-        message: 消息对象
+        message: the message
         
     Returns:
-        JSON 字典
+        JSON dict
     """
     return message.model_dump(exclude_none=True)
 

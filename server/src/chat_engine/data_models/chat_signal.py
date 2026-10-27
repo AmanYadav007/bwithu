@@ -22,10 +22,10 @@ class ChatSignal(BaseModel):
     @property
     def is_candidate(self) -> bool:
         """
-        判断信号是否为候选信号（建议性信号）。
-        如果信号来源不是 stream 的 owner，则为候选信号。
-        Stream owner 可以选择是否遵从候选信号。
+        Is this a candidate (advisory) signal?
+        It is one if it does not come from the stream's owner;
+        the owner may choose whether to follow it.
         """
         if self.related_stream is None or self.source_name is None:
-            return True  # 无法确定归属，视为候选
+            return True  # owner unknown: treat as a candidate
         return self.source_name != self.related_stream.producer_name

@@ -138,14 +138,14 @@ class HandlerASR(HandlerBase, ABC):
             context.audio_dump_file.write(output_audio.tobytes())
 
         context.output_audios.clear()
-        output_text = self.transcribe(output_audio)
+        output_text = self.transcribe(output_audio, context)
         if len(output_text) == 0:
             return
         output = DataBundle(output_definition)
         output.set_main_data(output_text)
         context.submit_data(output, finish_stream=True)
 
-    def transcribe(self, audio: np.ndarray) -> str:
+    def transcribe(self, audio: np.ndarray, context: Optional[ASRContext] = None) -> str:
         """16 kHz mono float audio -> text."""
         res = self.model.generate(input=audio, batch_size_s=10)
         logger.debug(res)  # BwithU: transcripts only at DEBUG (privacy)

@@ -1,5 +1,3 @@
-
-
 import os
 import re
 import time
@@ -22,15 +20,25 @@ from handlers.llm.openai_compatible.chat_history_manager import ChatHistory, His
 from bwithu.persona import GREETING_CUE, build_instructions
 from chat_engine.data_models.chat_stream_config import ChatStreamConfig
 
+DEVANAGARI = re.compile(r"[\u0900-\u097F]")
+
 
 class LLMConfig(HandlerBaseConfigModel, BaseModel):
     # BwithU: LLM_* env vars let the dev pipeline use any OpenAI-compatible provider.
-    model_name: str = Field(default=os.getenv("LLM_MODEL", "qwen-plus"))
-    system_prompt: str = Field(default="请你扮演一个 AI 助手，用简短的对话来回答用户的问题，并在对话内容中加入合适的标点符号，不需要加入标点符号相关的内容")
-    api_key: str = Field(default=os.getenv("LLM_API_KEY") or os.getenv("DASHSCOPE_API_KEY"))
-    api_url: str = Field(default=os.getenv("LLM_API_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"))
-    enable_video_input: bool = Field(default=False)
+    # The system prompt comes from src/bwithu/persona.py (name / vibe chosen in the web app).
+    model_name: str = Field(default=os.getenv("LLM_MODEL", ""))
+    api_key: Optional[str] = Field(default=os.getenv("LLM_API_KEY"))
+    api_url: str = Field(default=os.getenv("LLM_API_URL", "https://api.groq.com/openai/v1"))
     history_length: int = Field(default=20)
+    temperature: float = Field(default=0.7)
+    # A spoken reply is one to three sentences; Hindi in Devanagari takes about twice the tokens of English.
+    max_tokens: int = Field(default=200)
+    # Provider-specific request fields, e.g. {"reasoning_effort": "none"} so a reasoning model answers at once.
+    extra_body: Dict = Field(default_factory=dict)
+    # BwithU: Hindi turns go to a model that writes better Hindi (empty: use model_name for everything).
+    hindi_model_name: str = Field(default="")
+    hindi_extra_body: Dict = Field(default_factory=dict)
+    hindi_max_tokens: int = Field(default=300)
     # BwithU: if the user talks over a reply this soon after it was generated, they hadn't finished their turn
     # (a pause mid-sentence ended it early), so their next words are merged into that turn instead.
     early_interrupt_merge_s: float = Field(default=3.0)
@@ -48,13 +56,12 @@ class LLMContext(HandlerContext):
         self.client = None
         self.input_texts = ""
         self.output_texts = ""
-        self.current_image = None
         self.history = None
-        self.enable_video_input = False
         self.active_stream_keys: Set[StreamKey] = set()
         self.early_interrupt_merge_s = 3.0
         self.last_turn = None  # (human text, time its reply finished generating)
         self.merge_next = False
+        self.hindi = False  # is the conversation in Hindi right now?
 
 
 class HandlerLLM(HandlerBase, ABC):
@@ -74,9 +81,6 @@ class HandlerLLM(HandlerBase, ABC):
             ChatDataType.HUMAN_TEXT: HandlerDataInfo(
                 type=ChatDataType.HUMAN_TEXT,
             ),
-            ChatDataType.CAMERA_VIDEO: HandlerDataInfo(
-                type=ChatDataType.CAMERA_VIDEO,
-            ),
         }
         outputs = {
             ChatDataType.AVATAR_TEXT: HandlerDataInfo(
@@ -95,7 +99,7 @@ class HandlerLLM(HandlerBase, ABC):
     def load(self, engine_config: ChatEngineConfigModel, handler_config: Optional[BaseModel] = None):
         if isinstance(handler_config, LLMConfig):
             if handler_config.api_key is None or len(handler_config.api_key) == 0:
-                error_message = 'api_key is required in config/xxx.yaml, when use handler_llm'
+                error_message = 'LLM_API_KEY is not set'
                 logger.error(error_message)
                 raise ValueError(error_message)
 
@@ -109,14 +113,14 @@ class HandlerLLM(HandlerBase, ABC):
         context.system_prompt = {'role': 'system', 'content': build_instructions(params)}
         context.api_key = handler_config.api_key
         context.api_url = handler_config.api_url
-        context.enable_video_input = handler_config.enable_video_input
         context.history = ChatHistory(history_length=handler_config.history_length)
         context.early_interrupt_merge_s = handler_config.early_interrupt_merge_s
-        context.client =    OpenAI(  
-            # 若没有配置环境变量，请用百炼API Key将下行替换为：api_key="sk-xxx",
+        context.config = handler_config
+        context.hindi = params.get("lang") == "hi"  # the user picked Hindi: start (and greet) in Hindi
+        context.client = OpenAI(
             api_key=context.api_key,
             base_url=context.api_url,
-            timeout=5.0,  # 30秒超时，避免 API 无响应时阻塞整个系统
+            timeout=5.0,  # so an unresponsive API can't stall the call
         )
         return context
     
@@ -129,13 +133,9 @@ class HandlerLLM(HandlerBase, ABC):
         context = cast(LLMContext, context)
 
         streamer = context.data_submitter.get_streamer(ChatDataType.AVATAR_TEXT)
-        if inputs.type == ChatDataType.CAMERA_VIDEO and context.enable_video_input:
-            context.current_image = inputs.data.get_main_data()
+        if inputs.type != ChatDataType.HUMAN_TEXT:
             return
-        elif inputs.type == ChatDataType.HUMAN_TEXT:
-            text = inputs.data.get_main_data()
-        else:
-            return
+        text = inputs.data.get_main_data()
 
         stream_key = streamer.current_stream.identity.stream_key_str if streamer.current_stream is not None else None
         if stream_key is None:
@@ -158,25 +158,28 @@ class HandlerLLM(HandlerBase, ABC):
             streamer.stream_data(end_output, name="openai_compatible", config=ChatStreamConfig(cancelable=True), finish_stream=True)
             return
         chat_text = self._merge_early_interrupted_turn(context, chat_text)
-        logger.debug(f'llm input {context.model_name} {chat_text} ')
-        current_content = context.history.generate_next_messages(chat_text, 
-                                                                 [context.current_image] if context.current_image is not None else [])
-        logger.debug(f'llm input {context.model_name} {current_content} ')
+        model, max_tokens, extra_body = self._pick_model(context, chat_text)
+        logger.debug(f'llm input {model} {chat_text} ')
+        current_content = context.history.generate_next_messages(chat_text)
         if stream_key:
             context.active_stream_keys.add(stream_key)
+        cancelled = False
+        started = time.monotonic()
+        first_token_at = None
         try:
             completion = context.client.chat.completions.create(
-                model=context.model_name,  # 此处以qwen-plus为例，可按需更换模型名称。模型列表：https://help.aliyun.com/zh/model-studio/getting-started/models
+                model=model,
                 messages=[
                     context.system_prompt,
                 ] + current_content,
                 stream=True,
-                stream_options={"include_usage": True}
+                stream_options={"include_usage": True},
+                temperature=context.config.temperature,
+                max_tokens=max_tokens,
+                extra_body=extra_body or None,
             )
-            context.current_image = None
             context.input_texts = ''
             context.output_texts = ''
-            cancelled = False
             for chunk in completion:
                 if stream_key and stream_key not in context.active_stream_keys:
                         cancelled = True
@@ -187,6 +190,9 @@ class HandlerLLM(HandlerBase, ABC):
                         break
                 if (chunk and chunk.choices and chunk.choices[0] and chunk.choices[0].delta.content):
                     output_text = chunk.choices[0].delta.content
+                    if first_token_at is None:
+                        first_token_at = time.monotonic()
+                        logger.info(f"LLM first token after {round((first_token_at - started) * 1000)} ms")
                     context.output_texts += output_text
                     logger.debug(output_text)
                     output = DataBundle(output_definition)
@@ -197,18 +203,13 @@ class HandlerLLM(HandlerBase, ABC):
                 context.history.add_message(HistoryMessage(role="avatar", content=context.output_texts))
                 context.last_turn = (chat_text, time.monotonic())
         except Exception as e:
-            logger.error(e)
             if isinstance(e, APIStatusError):
-                response = e.body
-                if isinstance(response, dict) and "message" in response:
-                    error_text = f"{response['message']}"
-                else:
-                    error_text = str(response) if response else str(e)
+                logger.error(f"LLM error {e.status_code}: {e.body or e}")
             else:
-                # Handle APIConnectionError and other exceptions
-                error_text = f"连接错误: {e}"
+                logger.error(f"LLM error: {e}")
+            # BwithU: the avatar speaks this, so never the provider's error message.
             output = DataBundle(output_definition)
-            output.set_main_data(error_text)
+            output.set_main_data("Sorry, I lost my train of thought for a second. Could you say that again?")
             streamer.stream_data(output, finish_stream=True)
         context.input_texts = ''
         context.output_texts = ''
@@ -219,6 +220,17 @@ class HandlerLLM(HandlerBase, ABC):
         end_output = DataBundle(output_definition)
         end_output.set_main_data('')
         streamer.stream_data(end_output, finish_stream=True)
+
+    @staticmethod
+    def _pick_model(context: "LLMContext", chat_text: str):
+        config = context.config
+        if DEVANAGARI.search(chat_text):
+            context.hindi = True
+        elif len(chat_text.split()) >= 4 and chat_text != GREETING_CUE:
+            context.hindi = False  # a real English sentence; a short "okay" doesn't switch languages
+        if context.hindi and config.hindi_model_name:
+            return config.hindi_model_name, config.hindi_max_tokens, config.hindi_extra_body
+        return context.model_name, config.max_tokens, config.extra_body
 
     @staticmethod
     def _merge_early_interrupted_turn(context: "LLMContext", chat_text: str) -> str:

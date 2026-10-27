@@ -1,13 +1,13 @@
 // End-to-end call tests in real Chrome (headless, Mac GPU) with a fake microphone.
-// Usage: node e2e/call.test.mjs [greet|question|interrupt] [url]
-// Prereqs: server running (./run.sh bwithu_dev or bwithu), `npm run build`, `e2e/make-fixtures.sh`.
+// Usage: node e2e/call.test.mjs [greet|question|interrupt|hindi] [url]
+// Prereqs: server running (server/run.sh), `npm run build`, `e2e/make-fixtures.sh`.
 import { chromium } from 'playwright-core'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
 const scenario = process.argv[2] || 'question'
 const url = process.argv[3] || 'http://127.0.0.1:8282/'
-const fixture = { greet: 'silence.wav', question: 'question.wav', interrupt: 'interrupt.wav' }[scenario]
+const fixture = { greet: 'silence.wav', question: 'question.wav', interrupt: 'interrupt.wav', hindi: 'hindi.wav' }[scenario]
 const dir = path.dirname(fileURLToPath(import.meta.url))
 const t0 = Date.now()
 const ts = () => ((Date.now() - t0) / 1000).toFixed(2).padStart(6)
@@ -54,10 +54,11 @@ page.on('websocket', (ws) =>
   })
 )
 await page.goto(url, { waitUntil: 'networkidle' })
-// E2E_VOICE picks the companion's voice (an id from src/config/companion.ts VOICES).
-await page.evaluate((voice) =>
-  localStorage.setItem('bwithu.companion', JSON.stringify({ name: 'Nova', userName: 'Tester', avatar: 'james', vibe: 'warm', voice })),
-  process.env.E2E_VOICE || 'ava'
+// E2E_VOICE picks the companion's voice (an id from src/config/companion.ts VOICES), E2E_LANG the language
+// the user speaks ('hindi' speaks Hindi by default).
+await page.evaluate(([voice, language]) =>
+  localStorage.setItem('bwithu.companion', JSON.stringify({ name: 'Nova', userName: 'Tester', avatar: 'james', vibe: 'warm', voice, language })),
+  [process.env.E2E_VOICE || 'ava', process.env.E2E_LANG || (scenario === 'hindi' ? 'hi' : 'en')]
 )
 await page.reload({ waitUntil: 'networkidle' })
 await page.getByRole('button', { name: /Start call/ }).click()

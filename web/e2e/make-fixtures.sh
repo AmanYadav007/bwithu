@@ -10,10 +10,13 @@ silence() { echo "-f lavfi -t $1 -i anullsrc=r=48000:cl=mono"; }
 say "Hey there! What's your name, and how is your day going?" q.mp3
 say "Can you tell me a long story about a dragon who loves the sea?" q1.mp3
 say "Actually, stop. What is two plus two?" q2.mp3
+"$PY" -m edge_tts --voice hi-IN-MadhurNeural --text "यार आज ऑफिस में बहुत काम था, मैं बहुत थक गया हूँ। तुम्हारा दिन कैसा रहा?" --write-media qh.mp3
 ffmpeg -loglevel error -y $(silence 30) -c:a pcm_s16le silence.wav
 ffmpeg -loglevel error -y $(silence 3) -i q.mp3 $(silence 20) \
   -filter_complex "[1:a]$mono[q];[0:a][q][2:a]concat=n=3:v=0:a=1" -c:a pcm_s16le question.wav
 ffmpeg -loglevel error -y $(silence 3) -i q1.mp3 $(silence 7) -i q2.mp3 $(silence 25) \
   -filter_complex "[1:a]$mono[a];[3:a]$mono[b];[0:a][a][2:a][b][4:a]concat=n=5:v=0:a=1" -c:a pcm_s16le interrupt.wav
-rm -f q.mp3 q1.mp3 q2.mp3
+ffmpeg -loglevel error -y $(silence 3) -i qh.mp3 $(silence 20) \
+  -filter_complex "[1:a]$mono[q];[0:a][q][2:a]concat=n=3:v=0:a=1" -c:a pcm_s16le hindi.wav
+rm -f q.mp3 q1.mp3 q2.mp3 qh.mp3
 echo "fixtures ready"

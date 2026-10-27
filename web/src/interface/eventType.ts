@@ -12,7 +12,6 @@ export enum EventTypes {
 export enum WsProtocol {
   InitializeAvatarSession = 'InitializeAvatarSession',
   SendHumanAudio = 'SendHumanAudio',
-  SendHumanVideo = 'SendHumanVideo',
   SendHumanText = 'SendHumanText',
   TriggerHeartbeat = 'TriggerHeartbeat',
   Interrupt = 'Interrupt',
@@ -26,8 +25,8 @@ export enum WsProtocol {
   MotionDataWelcome = 'MotionDataWelcome',
   MotionData = 'MotionData',
   Error = 'Error',
-  InterruptAccepted = 'InterruptAccepted', // 打断成功通知
-  InterruptNotification = 'InterruptNotification', // 双工打断通知
+  InterruptAccepted = 'InterruptAccepted', // interrupt accepted
+  InterruptNotification = 'InterruptNotification', // server-side interrupt
   ChatSignal = 'ChatSignal',
 }
 
@@ -54,8 +53,6 @@ export interface InitializeAvatarSessionPayload {
   subscriptions?: SubscriptionType[]
 }
 
-export type TransportType = 'binary' | 'base64'
-
 interface BinaryTransportPayload {
   transport: 'binary'
   binary_size: number
@@ -68,20 +65,6 @@ interface Base64TransportPayload {
 }
 
 export type SendHumanAudioPayload = BinaryTransportPayload | Base64TransportPayload
-
-export type ImageFormat = 'JPEG' | 'JPG' | 'PNG' | string
-
-export type SendHumanVideoPayload =
-  | (BinaryTransportPayload & {
-      width: number
-      height: number
-      format: ImageFormat
-    })
-  | (Base64TransportPayload & {
-      width: number
-      height: number
-      format: ImageFormat
-    })
 
 export type TextMode = 'increment' | 'full_text'
 
@@ -183,7 +166,6 @@ export interface MotionDataPayload {
 export type ErrorCode =
   | 'INVALID_SESSION'
   | 'AUDIO_FORMAT_ERROR'
-  | 'VIDEO_FORMAT_ERROR'
   | 'HEARTBEAT_TIMEOUT'
   | 'INTERNAL_ERROR'
   | 'RATE_LIMIT'
@@ -212,18 +194,9 @@ export interface SignalBody {
   signal_data?: SignalData
 }
 
-export interface SignalPayload {
-  header: {
-    name: 'ChatSignal'
-    request_id: string
-  }
-  payload: SignalBody
-}
-
 export type WsPayloadMap = {
   [WsProtocol.InitializeAvatarSession]: InitializeAvatarSessionPayload
   [WsProtocol.SendHumanAudio]: SendHumanAudioPayload
-  [WsProtocol.SendHumanVideo]: SendHumanVideoPayload
   [WsProtocol.SendHumanText]: SendHumanTextPayload
   [WsProtocol.TriggerHeartbeat]: undefined
   [WsProtocol.Interrupt]: InterruptPayload
@@ -266,25 +239,13 @@ export type WsInboundMessage = WsMessage<
   | WsProtocol.ChatSignal
 >
 
-export type WsOutboundMessage = WsMessage<
-  | WsProtocol.InitializeAvatarSession
-  | WsProtocol.SendHumanAudio
-  | WsProtocol.SendHumanVideo
-  | WsProtocol.SendHumanText
-  | WsProtocol.TriggerHeartbeat
-  | WsProtocol.Interrupt
-  | WsProtocol.EndSpeech
->
-
 export enum PlayerEventTypes {
-  // Player没断
   'Player_EndSpeaking' = 'Player_EndSpeaking',
   'Player_NoLegacy' = 'Player_NoLegacy',
-  // Player相关
   'Player_StartSpeaking' = 'Player_StartSpeaking',
   'Player_WaitNextAudioClip' = 'Player_WaitNextAudioClip',
 }
-// 端测渲染(端到端)、单独输出数字人处理核心数据Processor相关的事件
+// Events from the Processor (motion data handling for the in-browser renderer)
 export enum ProcessorEventTypes {
   'Change_Status' = 'Change_Status',
   'Chat_BinsizeError' = 'Chat_BinsizeError',

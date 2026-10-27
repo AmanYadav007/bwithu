@@ -131,6 +131,7 @@ export const useCallStore = defineStore('call', {
           user: companion.userName,
           vibe: companion.vibe,
           voice: companion.voice,
+          lang: companion.language,
           cid: clientId(),
         })
         rt.ws = markRaw(ws)

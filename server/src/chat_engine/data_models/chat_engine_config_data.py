@@ -35,4 +35,3 @@ class ChatEngineConfigModel(BaseModel):
     handler_configs: Optional[Dict[str, Dict]] = None
     logic_configs: Optional[Dict[str, Dict]] = Field(default=None)
     outputs: Dict[EngineChannelType, ChatEngineOutputSource] = Field(default_factory=dict)
-    turn_config: Optional[Dict] = Field(default=None)

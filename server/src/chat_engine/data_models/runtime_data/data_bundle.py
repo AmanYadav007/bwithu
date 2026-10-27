@@ -322,19 +322,19 @@ class DataBundle:
         return self.metadata.get(name, default)
 
     def add_event(self, event: EventData):
-        """添加事件"""
+        """Add an event"""
         self.events.append(event)
 
     def add_event_by_type(self, event_type: EventType, subtype: Optional[str] = None,
                          event_data: Optional[str] = None):
-        """通过类型快速添加事件"""
+        """Add an event by type"""
         event = EventData(event_type=event_type, event_subtype=subtype, event_data=event_data)
         self.events.append(event)
 
     def has_event(self, event_type: EventType) -> bool:
-        """检查是否存在特定类型的事件"""
+        """Is there an event of this type?"""
         return any(e.event_type == event_type for e in self.events)
 
     def get_events_by_type(self, event_type: EventType) -> List[EventData]:
-        """获取特定类型的所有事件"""
+        """All events of this type"""
         return [e for e in self.events if e.event_type == event_type]

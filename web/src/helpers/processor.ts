@@ -8,7 +8,7 @@ import { Player } from './player'
 export type IPayload = Record<string, string | number | object | Blob>
 
 interface IDataRecords {
-  channel_names?: string[] //只有welcome 包中包含
+  channel_names?: string[] // only in the welcome packet
   data_id: number
   data_offset: number
   data_type: string
@@ -28,19 +28,19 @@ interface IParsedData {
   events: IEvent[]
 }
 interface IAvatarMotionData {
-  // 数据大小，首包存在该值
+  // Data size (first packet only)
   binary_size: number
-  // 是否首包
+  // Is this the first packet?
   first_package: boolean
-  // 数据分片，非首包存在该值
+  // Data slice (not on the first packet)
   motion_data_slice?: Blob
-  // 分片数量，首包存在该值
+  // Number of slices (first packet only)
   segment_num?: number
-  // 分片索引，非首包存在该值
+  // Slice index (not on the first packet)
   slice_index?: number
-  // 是否使用二进制帧，首包存在该值
+  // Binary frames? (first packet only)
   use_binary_frame?: boolean
-  // 初始化的音频是否静音
+  // Is the initial audio muted?
   is_audio_mute?: boolean
 }
 
@@ -53,7 +53,6 @@ interface IAvatarMotionGroupBase {
   merged_motion_data: Uint8Array
   motion_data_slices: Blob[]
   player?: Player
-  tts2faceArrayBufferArray?: ArrayBuffer[]
 }
 interface IAvatarMotionGroup extends IAvatarMotionGroupBase {
   binary_size: number
@@ -80,11 +79,8 @@ export class Processor {
   private _motionDataGroups: IAvatarMotionGroup[] = []
   private _arkit_face_sample_rate?: number
   private _arkit_face_channel_names?: string[]
-  private _tts2face_sample_rate?: number
-  private _tts2face_channel_names?: string[]
   private _maxBatchId?: number
   private _arkitFaceShape?: number
-  private _tts2FaceShape?: number
   private _rendererType?: 'lam' | ''
   constructor(ee: EventEmitter, rendererType?: 'lam' | '') {
     this.ee = ee
@@ -121,12 +117,6 @@ export class Processor {
     })
     return batch_id
   }
-  getTtt2FaceFrame() {
-    return {
-      tts2Face: this._getTts2FaceFrame(),
-    }
-  }
-
   interrupt() {
     this._motionDataGroups.forEach((group) => {
       if (group.batch_id) {
@@ -193,54 +183,6 @@ export class Processor {
     }
     return null
   }
-  private _getTts2FaceFrame() {
-    if (!this._motionDataGroups.length) {
-      return null
-    }
-    const targetMotion = this._motionDataGroups.find((_motion) => _motion.player)
-    if (!targetMotion) {
-      return null
-    }
-    const { tts2faceArrayBufferArray, player } = targetMotion!
-    if (
-      player &&
-      player._firstStartAbsoluteTime &&
-      tts2faceArrayBufferArray &&
-      tts2faceArrayBufferArray.length > 0 &&
-      this._tts2FaceShape &&
-      this._tts2face_sample_rate
-    ) {
-      const offsetTime = Date.now() - player._firstStartAbsoluteTime
-      let lastIndex = 0
-      let firstSampleStartTime: number
-      player.samplesList.forEach((item, index) => {
-        if (firstSampleStartTime === undefined && item.startTime !== undefined) {
-          firstSampleStartTime = item.startTime
-        }
-        if (
-          item.startTime !== undefined &&
-          item.startTime - firstSampleStartTime <= offsetTime / 1000
-        ) {
-          lastIndex = index
-        }
-      })
-      const samples = player.samplesList[lastIndex]
-      // BwithU: relative to the first sample, so a shared (long-running) AudioContext keeps lips in sync.
-      const subOffsetTime = offsetTime - (samples.startTime! - firstSampleStartTime!) * 1000
-      const offset = Math.floor((subOffsetTime / 1000) * this._tts2face_sample_rate)
-      const arkitFaceFloat32ArrayArray = new Float32Array(tts2faceArrayBufferArray[lastIndex])
-      const subData = arkitFaceFloat32ArrayArray?.slice(
-        offset * this._tts2FaceShape,
-        offset * this._tts2FaceShape + this._tts2FaceShape
-      )
-      if (subData?.length) {
-        return subData
-      }
-      return null
-    }
-    return null
-  }
-
   private async _motionDataGroupHandler(avatar_motion_data: IAvatarMotionData) {
     try {
       const {
@@ -254,9 +196,9 @@ export class Processor {
       if (first_package) {
         const lastMotionGroup = this._motionDataGroups[this._motionDataGroups.length - 1]
         if (lastMotionGroup) {
-          // 检测上一大片数量是否丢包
+          // Check whether the previous segment lost slices
           if (lastMotionGroup.segment_num !== lastMotionGroup.motion_data_slices.length) {
-            // 丢包触发错误
+            // a lost slice is an error
             this.ee.emit(EventTypes.ErrorReceived, 'lost data packets')
           }
         }
@@ -279,7 +221,7 @@ export class Processor {
         const prevMotionGroup = this._motionDataGroups[this._motionDataGroups.length - 2]
         lastMotionGroup.motion_data_slices.push(motion_data_slice)
         if (lastMotionGroup.motion_data_slices.length === lastMotionGroup.segment_num) {
-          // 单段不分小片段的情况，不需要mergeBlob，为了兼容后续逻辑，这里直接赋值
+          // A segment that wasn't split needs no mergeBlob; assign it directly for the code below
           // const blob = lastMotionGroup.motion_data_slices[0]
           // const blob = mergeBlob(
           //   lastMotionGroup.motion_data_slices,
@@ -302,12 +244,6 @@ export class Processor {
             // handle arkit face config for lam renderer
             await this._handleArkitFaceConfig(parsedData, lastMotionGroup, prevMotionGroup, bin)
           }
-          // await this._handletts2faceConfig(
-          //   parsedData,
-          //   lastMotionGroup,
-          //   prevMotionGroup,
-          //   bin,
-          // );
           await this._handleAudioConfig(
             parsedData,
             lastMotionGroup,
@@ -395,7 +331,7 @@ export class Processor {
       const audioBlobSliceEnd = data_offset + shapeLength
       const audioBlob = bin.slice(audioBlobSliceStart, audioBlobSliceEnd)
       const audioArrayBuffer = await audioBlob.arrayBuffer()
-      // 如果前一段还没播放结束，后一段已接收到，那么后一段则不能自动播放
+      // If the previous segment is still playing when this one arrives, this one must not autoplay
       const prevHasPlayerMotionDataGroup = this._motionDataGroups.find((item) => item.player)
       if (
         this._motionDataGroups.length &&
@@ -412,7 +348,7 @@ export class Processor {
         })
       }
     } else if (
-      // 特殊事件motion挂上这个
+      // Special motion events attach here
       prevMotionGroup &&
       prevMotionGroup.player &&
       lastMotionGroup.batch_id === prevMotionGroup.batch_id
@@ -458,45 +394,6 @@ export class Processor {
       lastMotionGroup.arkitFaceArrayBufferArray = prevMotionGroup.arkitFaceArrayBufferArray
     }
   }
-  private async _handletts2faceConfig(
-    parsedData: IParsedData,
-    lastMotionGroup: IAvatarMotionGroup,
-    prevMotionGroup: IAvatarMotionGroup,
-    bin: Blob
-  ) {
-    const { data_records = {} } = parsedData
-    const { tts2face } = data_records
-    if (tts2face) {
-      const { channel_names, shape, data_offset, sample_rate } = tts2face as IDataRecords
-      if (channel_names && !this._tts2face_channel_names) {
-        this._tts2face_channel_names = channel_names
-        this._tts2face_sample_rate = sample_rate
-      }
-      if (lastMotionGroup.tts2faceArrayBufferArray === undefined) {
-        if (
-          prevMotionGroup &&
-          prevMotionGroup.tts2faceArrayBufferArray &&
-          prevMotionGroup.batch_id === lastMotionGroup.batch_id
-        ) {
-          lastMotionGroup.tts2faceArrayBufferArray = prevMotionGroup.tts2faceArrayBufferArray
-        } else {
-          lastMotionGroup.tts2faceArrayBufferArray = []
-        }
-        const shapeLength = shape.reduce((acc: number, cur: number) => acc * cur, 4)
-        this._tts2FaceShape = shape[1]
-        const tts2faceBlob = bin.slice(data_offset, data_offset + shapeLength)
-        const tts2faceArrayBuffer = await tts2faceBlob.arrayBuffer()
-        lastMotionGroup.tts2faceArrayBufferArray.push(tts2faceArrayBuffer)
-      }
-    } else if (
-      prevMotionGroup &&
-      prevMotionGroup.tts2faceArrayBufferArray &&
-      lastMotionGroup.batch_id === prevMotionGroup.batch_id
-    ) {
-      lastMotionGroup.tts2faceArrayBufferArray = prevMotionGroup.tts2faceArrayBufferArray
-    }
-  }
-
   private _handleEvents(parsedData: IParsedData) {
     const { events } = parsedData
     if (events && events.length) {
@@ -521,19 +418,19 @@ export class Processor {
     prevMotionGroup: IAvatarMotionGroup
   ) {
     let batchCheckResult = true
-    // 处理二进制batch_id
+    // Binary batch_id
     if (parsedData.batch_id && lastMotionGroup.batch_id === undefined) {
       lastMotionGroup.batch_id = parsedData.batch_id
     }
-    // 特殊事件motion如果没有batch_id，也可挂上此batch_id
+    // A special motion event without a batch_id takes this one
     if (!lastMotionGroup.batch_id && prevMotionGroup && prevMotionGroup.batch_id) {
       lastMotionGroup.batch_id = prevMotionGroup.batch_id
     }
-    // 特殊事件motion如果没有batch_name，也可挂上此batch_name
+    // A special motion event without a batch_name takes this one
     if (parsedData.batch_name && lastMotionGroup.batch_name === undefined) {
       lastMotionGroup.batch_name = parsedData.batch_name
     }
-    // 处理打断后，如果仍接收到上一个batch的motionData, 那么重新销毁
+    // After an interrupt, motion data from the old batch is destroyed again
     if (
       this._maxBatchId &&
       lastMotionGroup.batch_id &&

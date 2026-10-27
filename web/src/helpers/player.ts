@@ -4,17 +4,14 @@ import { nanoid } from 'nanoid'
 import { PlayerEventTypes } from '../interface/eventType'
 import { getAudioContext } from './audioContext'
 interface IOption {
-  // 传入的数据是采用多少位编码，默认16位
   channels: number
-  // 缓存时间 单位 ms
-  fftSize: number
-
-  inputCodec: 'Int8' | 'Int16' | 'Int32' | 'Float32'
   // analyserNode fftSize
+  fftSize: number
+  // Sample encoding of the input data
+  inputCodec: 'Int8' | 'Int16' | 'Int32' | 'Float32'
   onended: (extParams?: IExtInfo) => void
-  // 采样率 单位Hz
+  // Hz
   sampleRate: number
-  // 是否静音
   isMute: boolean
 }
 interface ITypedArrays {
@@ -31,7 +28,7 @@ interface ISamples {
 }
 export class Player {
   static isTypedArray(data: Int8Array | Int16Array | Int32Array | Float32Array) {
-    // 检测输入的数据是否为 TypedArray 类型或 ArrayBuffer 类型
+    // Is the input a TypedArray or an ArrayBuffer?
     return (
       (data.byteLength && data.buffer && data.buffer.constructor === ArrayBuffer) ||
       data.constructor === ArrayBuffer
@@ -40,16 +37,16 @@ export class Player {
   id = nanoid()
   analyserNode?: AnalyserNode
   audioCtx?: AudioContext
-  // 是否自动播放
+  // Autoplay
   autoPlay = true
   bufferSource?: AudioBufferSourceNode
   convertValue = 32768
   ee: EventEmitter
   gainNode?: GainNode
   option: IOption = {
-    inputCodec: 'Int16', // 传入的数据是采用多少位编码，默认16位
-    channels: 1, // 声道数
-    sampleRate: 8000, // 采样率 单位Hz
+    inputCodec: 'Int16', // Sample encoding of the input data (default 16-bit)
+    channels: 1, // Channel count
+    sampleRate: 8000, // Sample rate in Hz
     fftSize: 2048, // analyserNode fftSize
     onended: () => {},
     isMute: false,
@@ -96,15 +93,15 @@ export class Player {
       return
     }
     this._isSupported(audio)
-    // 获取格式化后的buffer
+    // Format the incoming buffer
     audio = this._getFormattedValue(audio)
-    // 开始拷贝buffer数据
-    // 新建一个Float32Array的空间
+    // Copy the buffer data
+    // into a new Float32Array
     const data = new Float32Array(audio.length)
-    // 复制传入的新数据
-    // 从历史buff位置开始
+    // copy the new data in
+    // after the existing samples
     data.set(audio, 0)
-    // 将新的完整buff数据赋值给samples
+    // and store the combined buffer as samples
     const samples = {
       data,
       end_of_batch,
@@ -160,7 +157,7 @@ export class Player {
     }
     this.bufferSource.buffer = audioBuffer
     this.bufferSource.connect(this.gainNode!)
-    this.bufferSource.connect(this.analyserNode!) // bufferSource连接到analyser
+    this.bufferSource.connect(this.analyserNode!)
     this.bufferSource.start(this.startTime)
     this.sources.push(this.bufferSource)
     samples.startTime = this.startTime
@@ -174,15 +171,15 @@ export class Player {
     this.startTime! += audioBuffer.duration
   }
   init(option: IOption) {
-    this.option = Object.assign(this.option, option) // 实例最终配置参数
+    this.option = Object.assign(this.option, option) // Final options for this instance
     this.convertValue = this._getConvertValue()
     this.typedArray = this._getTypedArray()
     this.initAudioContext()
   }
   initAudioContext() {
-    // 初始化音频上下文的东西
+    // Set up the audio context
     this.audioCtx = getAudioContext()
-    // 控制音量的 GainNode
+    // GainNode for volume
     // https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/createGain
     this.gainNode = this.audioCtx.createGain()
     this.gainNode.gain.value = this.option.isMute ? 0 : 1
@@ -222,9 +219,9 @@ export class Player {
     const float32 = new Float32Array(data.length)
 
     for (let i = 0; i < data.length; i++) {
-      // buffer 缓冲区的数据，需要是IEEE754 里32位的线性PCM，范围从-1到+1
-      // 所以对数据进行除法
-      // 除以对应的位数范围，得到-1到+1的数据
+      // AudioBuffer data must be 32-bit linear PCM (IEEE 754) in -1..+1,
+      // so divide each sample
+      // by the range of its bit depth.
       // float32[i] = data[i] / 0x8000;
       float32[i] = data[i] / this.convertValue
     }
@@ -232,15 +229,14 @@ export class Player {
   }
 
   private _isSupported(data: Int8Array | Int16Array | Int32Array | Float32Array) {
-    // 数据类型是否支持
-    // 目前支持 ArrayBuffer 或者 TypedArray
-    if (!Player.isTypedArray(data)) throw new Error('请传入ArrayBuffer或者任意TypedArray')
+    // Only ArrayBuffer or a TypedArray is supported
+    if (!Player.isTypedArray(data)) throw new Error('Expected an ArrayBuffer or a TypedArray')
     return true
   }
 
   private _getConvertValue() {
-    // 根据传入的目标编码位数
-    // 选定转换数据所需要的基本值
+    // Pick the base value for the conversion
+    // from the input bit depth
     const inputCodecs = {
       Int8: 128,
       Int16: 32768,
@@ -253,9 +249,8 @@ export class Player {
   }
 
   private _getTypedArray() {
-    // 根据传入的目标编码位数
-    // 选定前端的所需要的保存的二进制数据格式
-    // 完整TypedArray请看文档
+    // Pick the TypedArray that matches
+    // the input bit depth
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray
     const typedArrays: ITypedArrays = {
       Int8: Int8Array,

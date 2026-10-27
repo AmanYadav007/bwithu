@@ -1,4 +1,4 @@
-// heartbeat-worker.js - 心跳 Worker，不受浏览器后台限制
+// heartbeat-worker.js - heartbeat timer that background tabs don't throttle
 
 let heartbeatInterval = null
 

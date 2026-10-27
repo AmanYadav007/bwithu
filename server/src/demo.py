@@ -1,5 +1,4 @@
 from chat_engine.chat_engine import ChatEngine
-import gradio as gr
 import os
 import argparse
 import signal
@@ -9,7 +8,6 @@ import faulthandler
 # BwithU: `kill -USR1 <pid>` dumps every thread's stack to the log, to diagnose a hung server.
 faulthandler.register(signal.SIGUSR1, all_threads=True)
 
-import gradio
 import uvicorn
 from fastapi import FastAPI
 from loguru import logger
@@ -28,7 +26,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=str, help="service host address")
     parser.add_argument("--port", type=int, help="service host port")
-    parser.add_argument("--config", type=str, default="config/chat_with_openai_compatible_bailian_cosyvoice.yaml", help="config file to use")
+    parser.add_argument("--config", type=str, default="config/bwithu.yaml", help="config file to use")
     parser.add_argument("--env", type=str, default="default", help="environment to use in config file")
     return parser.parse_args()
 
@@ -52,30 +50,6 @@ class OpenAvatarChatWebServer(uvicorn.Server):
         await super().shutdown(sockets)
 
 
-def setup_demo():
-    """设置 FastAPI 应用和 Gradio 界面"""
-    app = FastAPI(docs_url=None, redoc_url=None)
-
-    css = """
-
-    .app {
-        @media screen and (max-width: 768px) {
-            padding: 8px !important;
-        }
-    }
-    footer {
-        display: none !important;
-    }
-    """
-    with gr.Blocks(css=css) as gradio_block:
-        with gr.Column():
-            with gr.Group() as rtc_container:
-                pass
-
-    gradio.mount_gradio_app(app, gradio_block, "/gradio")
-    return app, gradio_block, rtc_container
-
-
 def main():
     args = parse_args()
     config_from_env = os.environ.get("OPEN_AVATAR_CHAT_CONFIG", None)
@@ -83,17 +57,17 @@ def main():
         args.config = config_from_env
     logger_config, service_config, engine_config = load_configs(args)
 
-    # 设置modelscope的默认下载地址
+    # Default download location for ModelScope models
     if not os.path.isabs(engine_config.model_root):
         os.environ['MODELSCOPE_CACHE'] = os.path.join(DirectoryInfo.get_project_dir(),
                                                       engine_config.model_root.replace('models', ''))
 
     config_loggers(logger_config)
     
-    demo_app, ui, parent_block = setup_demo()
-    
+    demo_app = FastAPI(docs_url=None, redoc_url=None)
+
     chat_engine = ChatEngine()
-    chat_engine.initialize(engine_config, app=demo_app, ui=ui, parent_block=parent_block)
+    chat_engine.initialize(engine_config, app=demo_app)
 
     ssl_context = create_ssl_context(args, service_config)
 

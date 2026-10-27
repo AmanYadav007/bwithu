@@ -1,6 +1,6 @@
 // Choices offered in onboarding. Avatar ids are file names served by the
 // server at /download/lam_asset/<id>.zip; voice ids must be keys of `voices` in the server's
-// configs (Edge_TTS / QwenOmni); vibe ids must match server/src/bwithu/persona.py.
+// config (Edge_TTS); vibe ids must match server/src/bwithu/persona.py.
 
 export interface AvatarOption {
   id: string
@@ -26,6 +26,13 @@ export const VIBES = [
   { id: 'focused', label: 'Focused', hint: 'A clear-headed coach' },
 ] as const
 
+// The language the user will speak. Speech recognition can't tell Hindi spoken with English words from English,
+// so the user says which; ids must match server/src/bwithu/persona.py and the ASR handler.
+export const LANGUAGES = [
+  { id: 'en', label: 'English', hint: 'Talk in English' },
+  { id: 'hi', label: 'हिंदी · Hinglish', hint: 'Hindi, with English words mixed in' },
+] as const
+
 // Samples in public/voices/<id>.mp3 (same text in every voice).
 export const VOICES = [
   { id: 'ava', label: 'Ava', gender: 'Female', accent: 'US' },
@@ -38,6 +45,7 @@ export const VOICES = [
 
 export type VibeId = (typeof VIBES)[number]['id']
 export type VoiceId = (typeof VOICES)[number]['id']
+export type LanguageId = (typeof LANGUAGES)[number]['id']
 
 export interface Companion {
   name: string
@@ -45,6 +53,7 @@ export interface Companion {
   avatar: string
   vibe: VibeId
   voice: VoiceId
+  language: LanguageId
 }
 
 export const DEFAULT_COMPANION: Companion = {
@@ -53,6 +62,7 @@ export const DEFAULT_COMPANION: Companion = {
   avatar: 'maya',
   vibe: 'warm',
   voice: 'ava',
+  language: 'en',
 }
 
 // Voice ids saved before the voice list changed.

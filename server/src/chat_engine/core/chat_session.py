@@ -128,14 +128,14 @@ class ChatSession:
                 if original_type:
                     input_data.type = original_type
             
-            # 使用 try-except 包裹 handler.handle()，防止单次处理失败导致整个 pumper 线程退出
+            # Wrap handler.handle() so one failed item cannot kill the whole pumper thread
             try:
                 handler_result = handler.handle(context, input_data, handler_visible_output_info)
             except Exception as e:
                 handler_name = handler_env.handler_info.name if handler_env.handler_info else "Unknown"
                 logger.opt(exception=e).error(f"Handler {handler_name} raised exception during handle(), "
                                               f"input type: {input_data.type}, stream: {input_data.stream_id}")
-                # 重置 input_data.type 然后继续处理下一个数据
+                # Restore input_data.type and move on to the next item
                 input_data.type = actual_type
                 continue
             

@@ -5,8 +5,3 @@ export enum TYVoiceChatState {
   Thinking = 'Thinking',
 }
 
-export enum StreamState {
-  closed = 'closed',
-  open = 'open',
-  waiting = 'waiting',
-}

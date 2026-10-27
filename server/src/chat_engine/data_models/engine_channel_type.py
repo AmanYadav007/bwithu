@@ -8,4 +8,4 @@ class EngineChannelType(str, Enum):
     VIDEO = "video"
     EVENT = "event"
     MOTION_DATA = "motion_data"
-    DATA = "data"  # 用于 Agent 间传递的结构化数据
+    DATA = "data"  # structured data passed between agents

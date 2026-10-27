@@ -8,9 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Union
 
-import gradio
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -30,13 +29,6 @@ class FrontendRegistrationOptions:
     redirect_target: str = "/ui/index.html"
     init_config_route: str = "/openavatarchat/initconfig"
     frontend_dist_relative_path: str = "../../web/dist"
-    gradio_placeholder_html: str = (
-        """
-        <h1 id="openavatarchat">
-           The Gradio page is no longer available. Please use the openavatarchat-webui submodule instead.
-        </h1>
-        """
-    )
 
 
 def _resolve_frontend_path(options: FrontendRegistrationOptions) -> Path:
@@ -57,13 +49,11 @@ def _materialize_init_config(init_config: InitConfigSource) -> Dict[str, Any]:
 
 def register_frontend(
     app: FastAPI,
-    ui: gradio.blocks.Block,
-    parent_block: Optional[gradio.blocks.Block],
     init_config: InitConfigSource,
     options: Optional[FrontendRegistrationOptions] = None,
 ):
     """
-    Register the shared Web UI, init config endpoint, and placeholder Gradio notice.
+    Register the web app and its init config endpoint.
     """
 
     opts = options or FrontendRegistrationOptions()
@@ -98,11 +88,5 @@ def register_frontend(
 
         app.add_route(opts.root_route, index)
     else:
-        logger.warning(f"Frontend directory {frontend_path} does not exist")
-        app.add_route(opts.root_route, RedirectResponse(url="/gradio"))
-
-    active_parent = parent_block or ui
-    with ui:
-        with active_parent:
-            gradio.components.HTML(opts.gradio_placeholder_html, visible=True)
+        logger.warning(f"Frontend directory {frontend_path} does not exist; run `npx vite build` in web/")
 

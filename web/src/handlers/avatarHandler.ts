@@ -35,8 +35,6 @@ export class AvatarHandler extends EventEmitter {
   private _ws: WS
   private _downloadProgress: (percent: number) => void
   private _loadProgress: (percent: number) => void
-  private _loadPercent = 0
-  private _downloadPercent = 0
   private _processor!: Processor
   private _renderer: { dispose?: () => void } | null = null
   private _audioMute = false
@@ -52,26 +50,8 @@ export class AvatarHandler extends EventEmitter {
     this._assetsPath = assetsPath
     this._ws = ws
     this._rendererType = rendererType
-    if (downloadProgress) {
-      this._downloadProgress = (percent: number) => {
-        this._downloadPercent = percent
-        downloadProgress(percent)
-      }
-    } else {
-      this._downloadProgress = (percent: number) => {
-        this._downloadPercent = percent
-      }
-    }
-    if (loadProgress) {
-      this._loadProgress = (percent: number) => {
-        this._loadPercent = percent
-        loadProgress(percent)
-      }
-    } else {
-      this._loadProgress = (percent: number) => {
-        this._loadPercent = percent
-      }
-    }
+    this._downloadProgress = downloadProgress ?? (() => {})
+    this._loadProgress = loadProgress ?? (() => {})
     this._init()
   }
   private _init(): void {
@@ -176,8 +156,6 @@ export class AvatarHandler extends EventEmitter {
     this._stopHeartbeat()
     this._renderer?.dispose?.()
     this.curState = TYVoiceChatState.Idle
-    this._downloadPercent = 0
-    this._loadPercent = 0
     this._processor?.clear()
     this.removeAllListeners()
   }
@@ -304,14 +282,14 @@ export class AvatarHandler extends EventEmitter {
     this._processor.add({
       avatar_motion_data: {
         first_package: false,
-        motion_data_slice: data, // 数据分片，非首包存在该值
-        is_audio_mute: this._audioMute, // 音频片段是否静音，非首包存在该值
+        motion_data_slice: data, // data slice (not on the first packet)
+        is_audio_mute: this._audioMute, // is this audio muted? (not on the first packet)
       },
     })
   }
   private _handleAvatarAudioTextFrame(payload?: EchoAvatarAudioPayload): void {
     if (!payload) return
-    // 当前前端未做单独的 TTS 音频拼接播放，这里仅保留类型化后的钩子
+    // Audio is played with the motion data, not separately; this is only a typed hook
     console.log('EchoAvatarAudio', payload)
   }
   private _sendJson<K extends WsProtocol>(name: K, payload?: WsPayloadMap[K]): void {
@@ -338,7 +316,7 @@ export class AvatarHandler extends EventEmitter {
   }
   private _startHeartbeat(): void {
     this._stopHeartbeat()
-    // 使用 Web Worker 来发送心跳，避免浏览器后台时 setInterval 被节流
+    // Send heartbeats from a Web Worker: background tabs throttle setInterval
     this._heartbeatWorker = new Worker(
       new URL('../worklets/heartbeat-worker.js', import.meta.url),
       { type: 'module' }

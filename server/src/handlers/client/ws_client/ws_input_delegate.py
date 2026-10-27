@@ -1,6 +1,6 @@
 """
-WebSocket 输入端口会话委托
-处理客户端输入和文本回显
+WebSocket session delegate
+Handles client input and echoes text, audio, motion data and signals back
 """
 import asyncio
 import base64
@@ -33,24 +33,17 @@ from .ws_message_protocol import (
     EchoAvatarAudio, AvatarHeartbeat, InterruptAccepted, InterruptAcceptedPayload, Error,
     InterruptNotification, InterruptNotificationPayload,
     MessageHeader, EchoTextPayload, EchoAvatarAudioPayload, ErrorPayload, ErrorCode,
-    InitializeAvatarSession, SendHumanAudio, SendHumanVideo,
+    InitializeAvatarSession, SendHumanAudio,
     SendHumanText, TriggerHeartbeat, Interrupt, EndSpeech,
     MotionDataMessage, MotionDataPayload, BinaryDataInfo, ChatSignalPayload, ChatSignalMessage, MessageType,
-    AudioFormat
-)
-from .ws_opus_codec import (
-    OpusEncoder, OpusDecoder,
-    is_opus_available,
-    OpusStreamHeader,
-    DEFAULT_OPUS_FRAME_SIZE_MS
 )
 from chat_engine.data_models.runtime_data.motion_data import MotionDataSerializer
 
 
 @dataclass
 class PendingBinaryMeta:
-    kind: str  # 'audio' or 'video'
-    message: Union[SendHumanAudio, SendHumanVideo]
+    kind: str  # 'audio'
+    message: SendHumanAudio
 
 
 @dataclass
@@ -68,17 +61,17 @@ class WsInputSessionDelegate(ClientSessionDelegate):
     @staticmethod
     def _extract_stream_metadata(chat_data: ChatData, excluded_keys: set) -> Optional[Dict[str, Any]]:
         """
-        统一提取 stream metadata 的方法。
+        Extract the stream metadata from a ChatData.
 
-        从 ChatData 的 metadata 中提取 metadata，排除已经在 payload 中单独处理的字段。
-        ChatData 的 metadata 已经包含了 stream 的 inheritable metadata（由 stream_manager 自动复制）。
+        Takes the ChatData metadata minus the keys the payload already carries separately.
+        ChatData metadata already includes the stream's inheritable metadata (copied by stream_manager).
 
         Args:
-            chat_data: ChatData 对象
-            excluded_keys: 需要排除的 metadata keys（已经在 payload 中单独处理）
+            chat_data: the ChatData
+            excluded_keys: metadata keys to leave out (already in the payload)
 
         Returns:
-            过滤后的 metadata 字典，如果没有有效 metadata 则返回 None
+            The filtered metadata, or None if there is none
         """
         if not chat_data.data or not chat_data.data.metadata:
             return None
@@ -93,16 +86,16 @@ class WsInputSessionDelegate(ClientSessionDelegate):
     @staticmethod
     def _get_stream_metadata_for_signal(stream_manager, stream_id: ChatStreamIdentity) -> Optional[Dict[str, Any]]:
         """
-        统一获取 stream metadata 用于信号的方法。
+        Get a stream's metadata for a signal.
 
-        获取 stream 的完整 metadata（regular + inheritable），用于 STREAM_BEGIN 等信号。
+        The full stream metadata (regular + inheritable), used for STREAM_BEGIN and similar signals.
 
         Args:
-            stream_manager: StreamManager 实例
-            stream_id: Stream 的 identity
+            stream_manager: the StreamManager
+            stream_id: the stream's identity
 
         Returns:
-            Stream 的完整 metadata 字典，如果没有则返回 None
+            The stream's full metadata, or None
         """
         if stream_manager is None or stream_id is None:
             return None
@@ -112,8 +105,8 @@ class WsInputSessionDelegate(ClientSessionDelegate):
             if stream is None:
                 return None
 
-            # 合并 regular 和 inheritable metadata（inheritable 优先）
-            metadata = stream.metadata  # 这个 property 已经合并了
+            # Merge regular and inheritable metadata (inheritable wins)
+            metadata = stream.metadata  # this property already merges them
             return metadata if metadata else None
         except Exception as e:
             logger.warning(f"Failed to get stream metadata for signal: {e}")
@@ -153,8 +146,8 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                 ]
 
     """
-    WebSocket 输入端口会话委托
-    处理客户端的音频/视频/文本输入和控制信号
+    WebSocket session delegate
+    Handles the client's audio/text input and control messages
     """
 
     AVAILABLE_SUBSCRIPTIONS = {
@@ -165,7 +158,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
     }
 
     def __init__(self, heartbeat_timeout: float = 30.0):
-        self.session_id: Optional[str] = None  # 会话ID
+        self.session_id: Optional[str] = None
         self.clock: Optional[SessionClock] = None
         self.data_submitter = None
         self.shared_states = None
@@ -175,42 +168,41 @@ class WsInputSessionDelegate(ClientSessionDelegate):
 
         self.signal_to_client_queue = asyncio.Queue()
 
-        # 输出队列 - 用于接收引擎处理后的数据
+        # Output queues: data coming back from the engine
         self.output_queues = {
             EngineChannelType.AUDIO: asyncio.Queue(),
             EngineChannelType.TEXT: asyncio.Queue(),
             EngineChannelType.MOTION_DATA: asyncio.Queue(),
         }
 
-        # 输入数据定义
+        # Input data definitions
         self.input_data_definitions: Dict[EngineChannelType, DataBundleDefinition] = {}
 
-        # 模态映射
+        # Modality mapping
         self.modality_mapping = {
             EngineChannelType.AUDIO: ChatDataType.MIC_AUDIO,
-            EngineChannelType.VIDEO: ChatDataType.CAMERA_VIDEO,
             EngineChannelType.TEXT: ChatDataType.HUMAN_TEXT,
         }
 
-        # 会话状态
+        # Session state
         self.quit = asyncio.Event()
         self.initialized = False
         self.heartbeat_timeout = heartbeat_timeout
         self.last_heartbeat_time = time.time()
 
-        # 二进制数据组装器 (音频/视频)
+        # Binary data assembler (audio)
         self.binary_stream_assembler = BinaryStreamAssembler()
 
-        # 文本累积缓冲区（用于增量文本累积）
+        # Text buffer for incremental text
         self.text_buffer: Dict[str, str] = {}  # speech_id -> accumulated_text
         self.last_human_text: Optional[str] = None
 
-        # Motion Data 输出支持
+        # Motion data output
         self.motion_data_serializer: Optional[MotionDataSerializer] = None
         self.motion_welcome_sent = False
         self.motion_welcome_payload: Optional[bytes] = None
 
-        # WebSocket 发送锁 (避免并发发送冲突)
+        # WebSocket send lock (no concurrent sends)
         self.websocket_send_lock = asyncio.Lock()
 
         # Client playback tracking: stream_key -> playback_info dict
@@ -224,27 +216,22 @@ class WsInputSessionDelegate(ClientSessionDelegate):
         # Lifecycle-only streamer for CLIENT_PLAYBACK tracking (lazy-initialized)
         self._playback_streamer = None
 
-        # 连接管理
+        # Connections
         self.connection_infos: Dict[int, ConnectionInfo] = {}
         self.connection_lock = asyncio.Lock()
         self.primary_connection_id: Optional[int] = None
         self.primary_tasks: List[asyncio.Task] = []
 
-        # 订阅配置
+        # Subscriptions
         self.subscriptions: set[str] = set(self.AVAILABLE_SUBSCRIPTIONS)
 
-        # 音频格式配置
-        self.audio_format: str = "PCM"  # PCM 或 OPUS
-        self.audio_sample_rate: int = 16000  # 输入音频采样率
+        # Audio format
+        self.audio_format: str = "PCM"
+        self.audio_sample_rate: int = 16000  # input sample rate
         self.audio_channels: int = 1
-        self.opus_frame_size_ms: int = DEFAULT_OPUS_FRAME_SIZE_MS
-
-        # Opus 编解码器（懒加载）
-        self._opus_encoder: Optional[OpusEncoder] = None
-        self._opus_decoder: Optional[OpusDecoder] = None
 
     async def get_data(self, modality: EngineChannelType, timeout: Optional[float] = 0.1) -> Optional[ChatData]:
-        """从输出队列获取数据"""
+        """Get data from an output queue"""
         data_queue = self.output_queues.get(modality)
         if data_queue is None:
             return None
@@ -265,15 +252,15 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                  loopback: bool = False,
                  speech_id: Optional[str] = None):
         """
-        将数据提交到引擎处理
+        Submit data to the engine
 
         Args:
-            modality: 数据模态
-            data: 数据内容
-            timestamp: 时间戳
-            samplerate: 采样率
-            loopback: 是否回环
-            speech_id: 对话轮次ID
+            modality: data modality
+            data: the data
+            timestamp: timestamp
+            samplerate: sample rate
+            loopback: also echo it back to the client
+            speech_id: turn ID
         """
         if timestamp is None:
             timestamp = self.get_timestamp()
@@ -292,16 +279,12 @@ class WsInputSessionDelegate(ClientSessionDelegate):
         data_bundle = DataBundle(definition)
         is_last_data = False
         if modality == EngineChannelType.AUDIO:
-            # 音频数据: 确保是 [1, N] 形状
-            # 注意：不添加任何 metadata（与 RTC 一致，VAD 会自动处理）
+            # Audio: make it shape [1, N]
+            # no metadata needed; VAD handles it
             if isinstance(data, np.ndarray):
                 data_bundle.set_main_data(data.squeeze()[np.newaxis, ...])
-        elif modality == EngineChannelType.VIDEO:
-            # 视频数据: 添加批次维度
-            if isinstance(data, np.ndarray):
-                data_bundle.set_main_data(data[np.newaxis, ...])
         elif modality == EngineChannelType.TEXT:
-            # 文本数据
+            # Text
             is_last_data = True
             data_bundle.set_main_data(data)
         else:
@@ -319,11 +302,11 @@ class WsInputSessionDelegate(ClientSessionDelegate):
             self.output_queues[modality].put_nowait(chat_data)
 
     def get_timestamp(self) -> Tuple[int, int]:
-        """获取当前时间戳"""
+        """Current session timestamp"""
         return self.clock.get_timestamp()
 
     def emit_signal(self, signal: ChatSignal):
-        """发送信号到引擎"""
+        """Send a signal to the engine"""
         if self.signal_emitter is not None:
             self.signal_emitter.emit(signal)
         else:
@@ -340,7 +323,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
         return self._playback_streamer
 
     def clear_data(self):
-        """清空所有队列和状态"""
+        """Clear all queues and state"""
         for data_queue in self.output_queues.values():
             while not data_queue.empty():
                 try:
@@ -357,7 +340,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
         self._cancelled_stream_keys.clear()
 
     # ========================================================================
-    # 连接管理与广播
+    # Connections and broadcast
     # ========================================================================
 
     async def _register_connection(self, websocket: WebSocket) -> ConnectionInfo:
@@ -480,11 +463,11 @@ class WsInputSessionDelegate(ClientSessionDelegate):
             info.motion_welcome_sent = True
 
     # ========================================================================
-    # WebSocket 消息处理
+    # WebSocket message handling
     # ========================================================================
 
     async def _send_message(self, websocket: WebSocket, message):
-        """发送 JSON 消息"""
+        """Send a JSON message"""
         try:
             json_data = serialize_message(message)
             async with self.websocket_send_lock:
@@ -493,7 +476,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
             logger.error(f"Failed to send message: {e}")
 
     async def _send_error(self, websocket: WebSocket, request_id: str, code: str, message: str):
-        """发送错误消息"""
+        """Send an error message"""
         error_msg = Error(
             header=MessageHeader(name="Error", request_id=request_id),
             payload=ErrorPayload(code=code, message=message)
@@ -502,7 +485,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
 
     async def _handle_initialize_session(self, websocket: WebSocket, msg: InitializeAvatarSession,
                                          connection_info: ConnectionInfo):
-        """处理会话初始化"""
+        """Initialize the session"""
         logger.info(f"Initialize session: session_id={self.session_id}")
 
         if connection_info.role != "primary":
@@ -528,21 +511,21 @@ class WsInputSessionDelegate(ClientSessionDelegate):
             await self._send_message(websocket, response)
             return True
 
-        # 验证音频配置
+        # Check the audio config
         audio_config = msg.payload.audio
         audio_format_upper = audio_config.format.upper()
 
-        # 验证音频格式
-        if audio_format_upper not in ["PCM", "OPUS"]:
+        # Format
+        if audio_format_upper != "PCM":
             await self._send_error(
                 websocket,
                 msg.header.request_id,
                 ErrorCode.AUDIO_FORMAT_ERROR,
-                f"Unsupported audio format: {audio_config.format}. Expected PCM or OPUS."
+                f"Unsupported audio format: {audio_config.format}. Expected PCM."
             )
             return False
 
-        # 验证采样率
+        # Sample rate
         if audio_config.sample_rate not in [8000, 12000, 16000, 24000, 48000]:
             await self._send_error(
                 websocket,
@@ -552,7 +535,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
             )
             return False
 
-        # 验证通道数
+        # Channel count
         if audio_config.channels not in [1, 2]:
             await self._send_error(
                 websocket,
@@ -562,52 +545,14 @@ class WsInputSessionDelegate(ClientSessionDelegate):
             )
             return False
 
-        # 如果使用 OPUS 格式，检查 opuslib 是否可用
-        if audio_format_upper == "OPUS" and not is_opus_available():
-            await self._send_error(
-                websocket,
-                msg.header.request_id,
-                ErrorCode.AUDIO_FORMAT_ERROR,
-                "OPUS format requested but opuslib is not available on server."
-            )
-            return False
-
-        # 保存音频配置
+        # Save the audio config
         self.audio_format = audio_format_upper
         self.audio_sample_rate = audio_config.sample_rate
         self.audio_channels = audio_config.channels
-        self.opus_frame_size_ms = audio_config.opus_frame_size_ms or DEFAULT_OPUS_FRAME_SIZE_MS
-
-        # 初始化 Opus 编解码器
-        if audio_format_upper == "OPUS":
-            try:
-                self._opus_decoder = OpusDecoder(
-                    sample_rate=16000,  # 解码后统一转为 16kHz 供 VAD/ASR 使用
-                    channels=1
-                )
-                # 编码器使用 24kHz（TTS 输出采样率）
-                self._opus_encoder = OpusEncoder(
-                    sample_rate=24000,
-                    channels=1,
-                    frame_size_ms=self.opus_frame_size_ms
-                )
-                logger.info(f"Opus codec initialized for session {self.session_id}")
-            except Exception as e:
-                logger.error(f"Failed to initialize Opus codec: {e}")
-                await self._send_error(
-                    websocket,
-                    msg.header.request_id,
-                    ErrorCode.AUDIO_FORMAT_ERROR,
-                    f"Failed to initialize Opus codec: {str(e)}"
-                )
-                return False
-        else:
-            self._opus_encoder = None
-            self._opus_decoder = None
 
         logger.info(
             f"Audio config: format={self.audio_format}, sample_rate={self.audio_sample_rate}, "
-            f"channels={self.audio_channels}, opus_frame_size_ms={self.opus_frame_size_ms}"
+            f"channels={self.audio_channels}"
         )
 
         requested_subscriptions = msg.payload.subscriptions
@@ -630,7 +575,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
 
         self.initialized = True
 
-        # 发送初始化完成消息
+        # Tell the client the session is ready
         response = AvatarSessionInitialized(
             header=MessageHeader(name="AvatarSessionInitialized", request_id=msg.header.request_id)
         )
@@ -639,30 +584,12 @@ class WsInputSessionDelegate(ClientSessionDelegate):
         return True
 
     async def _handle_audio_data(self, websocket: WebSocket, msg: SendHumanAudio, audio_bytes: bytes):
-        """处理音频数据（支持 PCM 和 OPUS 格式）"""
+        """Handle 16-bit PCM audio from the client"""
         try:
             if not audio_bytes:
                 raise ValueError("Audio payload is empty")
 
-            # 确定音频格式（优先使用消息中指定的格式，否则使用会话配置）
-            audio_format = (msg.payload.format or self.audio_format).upper()
-
-            if audio_format == "OPUS":
-                # Opus 解码
-                if self._opus_decoder is None:
-                    # 尝试创建临时解码器
-                    if not is_opus_available():
-                        raise ValueError("OPUS format requested but opuslib is not available")
-                    self._opus_decoder = OpusDecoder(sample_rate=16000, channels=1)
-
-                audio_array = self._opus_decoder.decode(audio_bytes)
-                logger.debug(
-                    f"Opus decoded: {len(audio_bytes)} bytes -> {audio_array.size} samples, "
-                    f"session={self.session_id}"
-                )
-            else:
-                # PCM 格式
-                audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
+            audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
 
             if audio_array.size == 0:
                 raise ValueError("Audio payload could not be parsed into samples")
@@ -671,8 +598,6 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                 EngineChannelType.AUDIO,
                 audio_array
             )
-
-            # logger.debug(f"Received audio stream: {audio_array.size} samples, format={audio_format}, session={self.session_id}")
         except Exception as e:
             logger.error(f"Failed to process audio data: {e}")
             await self._send_error(
@@ -683,7 +608,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
             )
 
     async def _process_send_human_audio(self, websocket: WebSocket, msg: SendHumanAudio):
-        """根据 transport 处理音频上传指令"""
+        """Handle an audio upload message by its transport"""
         transport = (msg.payload.transport or "binary").lower()
 
         if transport == "binary":
@@ -738,119 +663,8 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                 f"Unsupported transport '{msg.payload.transport}'"
             )
 
-    async def _process_send_human_video(self, websocket: WebSocket, msg: SendHumanVideo):
-        """根据 transport 处理视频上传指令"""
-        transport = (msg.payload.transport or "binary").lower()
-
-        if transport == "binary":
-            if msg.payload.binary_size is None or msg.payload.segment_num is None:
-                await self._send_error(
-                    websocket,
-                    msg.header.request_id,
-                    ErrorCode.BINARY_DATA_ERROR,
-                    "binary_size and segment_num are required for binary transport"
-                )
-                return
-            if msg.payload.segment_num <= 0:
-                await self._send_error(
-                    websocket,
-                    msg.header.request_id,
-                    ErrorCode.BINARY_DATA_ERROR,
-                    "segment_num must be greater than 0"
-                )
-                return
-            metadata = PendingBinaryMeta(kind="video", message=msg)
-            self.binary_stream_assembler.register(
-                request_id=msg.header.request_id,
-                expected_segments=msg.payload.segment_num,
-                expected_size=msg.payload.binary_size,
-                metadata=metadata
-            )
-        elif transport == "base64":
-            if not msg.payload.data_base64:
-                await self._send_error(
-                    websocket,
-                    msg.header.request_id,
-                    ErrorCode.BINARY_DATA_ERROR,
-                    "data_base64 is required for base64 transport"
-                )
-                return
-            try:
-                video_bytes = base64.b64decode(msg.payload.data_base64, validate=True)
-            except (binascii.Error, ValueError) as e:
-                await self._send_error(
-                    websocket,
-                    msg.header.request_id,
-                    ErrorCode.BINARY_DATA_ERROR,
-                    f"Failed to decode base64 video data: {str(e)}"
-                )
-                return
-            await self._handle_video_data(websocket, msg, video_bytes)
-        else:
-            await self._send_error(
-                websocket,
-                msg.header.request_id,
-                ErrorCode.INVALID_MESSAGE,
-                f"Unsupported transport '{msg.payload.transport}'"
-            )
-
-    async def _handle_video_data(self, websocket: WebSocket, msg: SendHumanVideo, binary_data: bytes):
-        """
-        处理视频数据
-
-        系统内部使用 BGR 格式（与 RTC 的 CAMERA_VIDEO 一致）
-        - JPEG/PNG: 使用 cv2.imdecode 解码为 BGR
-        """
-        try:
-            import cv2
-
-            format_upper = msg.payload.format.upper()
-
-            # 解码视频帧
-            if format_upper in ["JPEG", "JPG", "PNG"]:
-                # 压缩格式：使用 OpenCV 解码（输出 BGR）
-                video_array = np.frombuffer(binary_data, dtype=np.uint8)
-                video_array = cv2.imdecode(video_array, cv2.IMREAD_COLOR)
-
-                if video_array is None:
-                    raise ValueError(f"Failed to decode {format_upper} image")
-
-                # 验证尺寸
-                h, w = video_array.shape[:2]
-                if h != msg.payload.height or w != msg.payload.width:
-                    logger.warning(
-                        f"Video size mismatch: expected {msg.payload.width}x{msg.payload.height}, "
-                        f"got {w}x{h}"
-                    )
-            else:
-                raise ValueError(f"Unsupported video format: {msg.payload.format}")
-
-            # 验证最终形状
-            if video_array.shape[2] != 3:
-                raise ValueError(f"Invalid video shape: {video_array.shape}, expected 3 channels")
-
-            # 提交到引擎（系统内部使用 BGR 格式）
-            self.put_data(
-                EngineChannelType.VIDEO,
-                video_array
-            )
-
-            logger.debug(
-                f"Received video frame: {video_array.shape}, format={format_upper}, "
-                f"session={self.session_id}"
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to process video data: {e}")
-            await self._send_error(
-                websocket,
-                msg.header.request_id,
-                ErrorCode.VIDEO_FORMAT_ERROR,
-                f"Failed to process video data: {str(e)}"
-            )
-
     def _handle_end_speech(self, msg: EndSpeech):
-        """处理 EndSpeech 消息"""
+        """Handle EndSpeech (the client finished playing a reply)"""
         stream_key_str = msg.payload.stream_key
         logger.info(f"EndSpeech received for stream_key={stream_key_str}")
 
@@ -1012,7 +826,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                 logger.debug("Avatar audio array is empty.")
                 return
 
-            # 获取音频元数据
+            # Audio metadata
             definition = chat_data.data.definition
             audio_entry = definition.get_main_entry() if definition is not None else None
             channels = 1
@@ -1056,50 +870,11 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                     streamer.open_stream(sources=sources, name=f"playback:{stream_key_str}")
                     logger.info(f"CLIENT_PLAYBACK stream opened: stream_key={stream_key_str}")
 
-            # 根据会话配置决定输出格式
-            output_format = self.audio_format
-            opus_frame_size_ms = None
-
-            if output_format == "OPUS" and self._opus_encoder is not None:
-                # Opus 编码
-                try:
-                    # 确保数据是 int16
-                    if audio_np.dtype != np.int16:
-                        if np.issubdtype(audio_np.dtype, np.floating):
-                            audio_np = np.clip(audio_np, -1.0, 1.0)
-                            audio_np = (audio_np * 32767.0).astype(np.int16)
-                        else:
-                            audio_np = audio_np.astype(np.int16)
-
-                    # 如果编码器采样率与音频不匹配，需要重新创建编码器
-                    if self._opus_encoder.sample_rate != sample_rate:
-                        self._opus_encoder = OpusEncoder(
-                            sample_rate=sample_rate,
-                            channels=channels,
-                            frame_size_ms=self.opus_frame_size_ms
-                        )
-
-                    # 编码音频，在音频流结束时刷新残留缓冲区
-                    binary_data = self._opus_encoder.encode(audio_np, flush=end_of_speech)
-                    opus_frame_size_ms = self.opus_frame_size_ms
-
-                    logger.debug(
-                        f"Opus encoded avatar audio: {audio_np.size} samples -> {len(binary_data)} bytes, "
-                        f"flush={end_of_speech}"
-                    )
-                except Exception as e:
-                    logger.warning(f"Opus encoding failed, falling back to PCM: {e}")
-                    output_format = "PCM"
-                    binary_data = self._prepare_pcm_audio(audio_np)
-            else:
-                # PCM 格式
-                output_format = "PCM"
-                binary_data = self._prepare_pcm_audio(audio_np)
-
+            binary_data = self._prepare_pcm_audio(audio_np)
             binary_size = len(binary_data)
             base64_data = base64.b64encode(binary_data).decode("ascii") if binary_size > 0 else ""
 
-            # 收集附加元数据（统一处理）
+            # Extra metadata
             stream_metadata = self._extract_stream_metadata(
                 chat_data,
                 excluded_keys=set()
@@ -1112,12 +887,11 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                     transport="base64",
                     binary_size=None,
                     segment_num=None,
-                    format=output_format,
+                    format="PCM",
                     sample_rate=sample_rate,
                     channels=channels,
                     data_base64=base64_data if base64_data else None,
                     end_of_speech=bool(end_of_speech),
-                    opus_frame_size_ms=opus_frame_size_ms,
                     metadata=stream_metadata,
                 )
             )
@@ -1125,7 +899,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
             await self._broadcast_message(message)
 
             logger.debug(
-                f"Echo avatar audio sent ({output_format}): stream_key={stream_key_str}"
+                f"Echo avatar audio sent: stream_key={stream_key_str}, "
                 f"size={binary_size}, sample_rate={sample_rate}, channels={channels}, end={end_of_speech}"
             )
         except Exception as e:
@@ -1133,7 +907,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
             raise
 
     def _prepare_pcm_audio(self, audio_np: np.ndarray) -> bytes:
-        """将音频数据转换为 PCM 格式的字节"""
+        """Convert audio to 16-bit PCM bytes"""
         if audio_np.dtype != np.int16:
             if np.issubdtype(audio_np.dtype, np.floating):
                 audio_np = np.clip(audio_np, -1.0, 1.0)
@@ -1144,24 +918,24 @@ class WsInputSessionDelegate(ClientSessionDelegate):
 
     async def _handle_text_data(self, websocket: WebSocket, msg: SendHumanText):
         """
-        处理文本数据
+        Handle text from the client
 
-        客户端可以发送增量或全量文本，但系统内部始终以全量模式提交到引擎。
-        - 如果 mode="increment"：累积文本，直到 end_of_speech=True 时发送完整文本
-        - 如果 mode="full_text"：直接使用该文本（忽略之前的累积）
+        The client may send incremental or full text; the engine always gets the full text.
+        - mode="increment": accumulate until end_of_speech=True, then submit the full text
+        - mode="full_text": use this text as is (dropping anything accumulated)
         """
         try:
             stream_key_str = msg.payload.stream_key
 
-            # 根据模式处理文本
+            # Handle the text by mode
             if msg.payload.mode == "increment":
-                # 增量模式：累积文本
+                # Incremental: accumulate
                 if stream_key_str not in self.text_buffer:
                     self.text_buffer[stream_key_str] = ""
                 self.text_buffer[stream_key_str] += msg.payload.text
                 full_text = self.text_buffer[stream_key_str]
             else:
-                # 全量模式：直接使用
+                # Full text: use as is
                 full_text = msg.payload.text
                 self.text_buffer[stream_key_str] = full_text
 
@@ -1173,7 +947,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                 header=MessageHeader(name="EchoHumanText", request_id=str(uuid4())),
                 payload=EchoTextPayload(
                     stream_key=stream_key_str,
-                    mode="full_text",  # HUMAN_TEXT 始终是全量
+                    mode="full_text",  # HUMAN_TEXT is always full text
                     text=full_text,
                     end_of_speech=text_end
                 )
@@ -1181,15 +955,15 @@ class WsInputSessionDelegate(ClientSessionDelegate):
             await self._broadcast_message(response)
             logger.debug(f"Echo human text (end={text_end}): {full_text[:50]}...")
 
-            # 只在 end_of_speech=True 时提交到引擎
+            # Only submit to the engine at end_of_speech
             if msg.payload.end_of_speech:
-                # 提交完整文本到引擎（全量模式）
+                # Submit the full text
                 self.put_data(
                     EngineChannelType.TEXT,
                     full_text,
                 )
 
-                # 清理缓冲区
+                # Clear the buffer
                 if stream_key_str in self.text_buffer:
                     del self.text_buffer[stream_key_str]
 
@@ -1200,24 +974,19 @@ class WsInputSessionDelegate(ClientSessionDelegate):
 
     async def _handle_heartbeat(self, websocket: WebSocket, msg: TriggerHeartbeat,
                                 connection_info: ConnectionInfo):
-        """处理心跳"""
+        """Handle a heartbeat"""
         connection_info.last_heartbeat_time = time.time()
-        # 发送心跳响应
+        # Reply to it
         response = AvatarHeartbeat(
             header=MessageHeader(name="AvatarHeartbeat", request_id=msg.header.request_id)
         )
         await self._send_message(websocket, response)
 
     async def _handle_interrupt(self, websocket: WebSocket, msg: Interrupt):
-        """处理打断信号"""
+        """Handle an interrupt from the client"""
         logger.info(f"Interrupt signal received: session_id={self.session_id}")
 
-        # 重置 Opus 编码器，清空残留缓冲区
-        if self._opus_encoder is not None:
-            self._opus_encoder.reset()
-            logger.debug("Opus encoder reset due to interrupt")
-
-        # 发送打断信号到引擎
+        # Send the interrupt to the engine
         signal = ChatSignal(
             source_type=ChatSignalSourceType.CLIENT,
             type=ChatSignalType.INTERRUPT,
@@ -1225,7 +994,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
         )
         self.emit_signal(signal)
 
-        # 发送打断接受消息（不带目标信息，因为是客户端发起的打断）
+        # Acknowledge it (no target: the client started this interrupt)
         response = InterruptAccepted(
             header=MessageHeader(name="InterruptAccepted", request_id=msg.header.request_id),
             payload=None  # Client-initiated interrupt doesn't have specific target info
@@ -1234,30 +1003,26 @@ class WsInputSessionDelegate(ClientSessionDelegate):
 
     async def _handle_server_interrupt_signal(self, signal: ChatSignal):
         """
-        处理服务端发起的 INTERRUPT 语义信号。
+        Handle a server-side INTERRUPT signal.
 
-        INTERRUPT 是纯语义通知（"系统决定打断了"），不携带具体 stream 引用。
-        实际的流取消和浏览器通知由 STREAM_CANCEL(AVATAR_AUDIO) handler 处理。
-        此处只做 interrupt 特有的即时清理（如 opus 编码器重置）。
+        INTERRUPT is a semantic notice ("the system decided to interrupt") with no stream reference.
+        The actual stream cancel and browser notice happen in the STREAM_CANCEL(AVATAR_AUDIO) handler.
+        Here we only log it.
         """
         signal_data = signal.signal_data or {}
         reason = signal_data.get("reason", "semantic_interrupt")
         logger.info(f"Server interrupt signal received: reason={reason}")
 
-        if self._opus_encoder is not None:
-            self._opus_encoder.reset()
-            logger.debug("Opus encoder reset due to server interrupt")
-
     async def _handle_avatar_audio_cancel_signal(self, signal: ChatSignal):
         """
-        处理 AVATAR_AUDIO 流取消信号（由 stream 系统的 cancel() 发出）。
+        Handle the cancel signal of an AVATAR_AUDIO stream (sent by the stream system's cancel()).
 
-        这是打断链路中浏览器通知的唯一入口：
+        This is the only place the browser is told about an interrupt:
         - cancel_streams_by_type(CLIENT_PLAYBACK) → cancel_stream_chain → AVATAR_AUDIO.cancel()
-        - AVATAR_AUDIO.cancel() emits STREAM_CANCEL signal → 到达此处
-        - 此处发送 InterruptNotification 通知浏览器停止播放
+        - AVATAR_AUDIO.cancel() emits STREAM_CANCEL -> arrives here
+        - here we send InterruptNotification so the browser stops playback
 
-        CLIENT_PLAYBACK 流由 engine 的 forward_cancel_signal 自动级联取消。
+        The engine's forward_cancel_signal cancels the CLIENT_PLAYBACK stream along with it.
         """
         if signal.related_stream is None:
             logger.warning("STREAM_CANCEL signal missing related_stream")
@@ -1292,27 +1057,24 @@ class WsInputSessionDelegate(ClientSessionDelegate):
             await self._broadcast_message(notification)
             logger.info(f"InterruptNotification sent for cancelled AVATAR_AUDIO: stream_key={stream_key_str}")
 
-            if self._opus_encoder is not None:
-                self._opus_encoder.reset()
-
     # ========================================================================
-    # WebSocket 任务
+    # WebSocket tasks
     # ========================================================================
 
     async def _ws_input_task(self, connection_info: ConnectionInfo):
-        """接收任务 - 处理客户端消息"""
+        """Receive task: handles client messages"""
         websocket = connection_info.websocket
         role = connection_info.role
         logger.info(f"Input task started for session {self.session_id}, role={role}")
 
         while not connection_info.quit.is_set() and not self.quit.is_set():
             try:
-                # 接收消息 (可能是 JSON 或二进制)
+                # Receive a message (JSON or binary)
                 raw_msg = await asyncio.wait_for(websocket.receive(), timeout=0.1)
 
-                # 处理 JSON 消息
+                # JSON message
                 if "text" in raw_msg:
-                    # 更新心跳时间（收到任何消息都表示客户端活跃）
+                    # Any message counts as a heartbeat
                     connection_info.last_heartbeat_time = time.time()
 
                     json_data = json.loads(raw_msg["text"])
@@ -1322,7 +1084,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                         logger.warning(f"Failed to parse message: {json_data}")
                         continue
 
-                    # 路由消息
+                    # Route the message
                     if isinstance(msg, InitializeAvatarSession):
                         success = await self._handle_initialize_session(websocket, msg, connection_info)
                         if role == "primary" and not success:
@@ -1338,8 +1100,6 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                         )
                     elif isinstance(msg, SendHumanAudio):
                         await self._process_send_human_audio(websocket, msg)
-                    elif isinstance(msg, SendHumanVideo):
-                        await self._process_send_human_video(websocket, msg)
                     elif isinstance(msg, SendHumanText):
                         await self._handle_text_data(websocket, msg)
                     elif isinstance(msg, Interrupt):
@@ -1347,9 +1107,9 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                     elif isinstance(msg, EndSpeech):
                         self._handle_end_speech(msg)
 
-                # 处理二进制消息
+                # Binary message
                 elif "bytes" in raw_msg:
-                    # 更新心跳时间（收到任何消息都表示客户端活跃）
+                    # Any message counts as a heartbeat
                     connection_info.last_heartbeat_time = time.time()
 
                     if role != "primary":
@@ -1366,8 +1126,6 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                         if isinstance(metadata, PendingBinaryMeta):
                             if metadata.kind == "audio":
                                 await self._handle_audio_data(websocket, metadata.message, complete_data)
-                            elif metadata.kind == "video":
-                                await self._handle_video_data(websocket, metadata.message, complete_data)
                             else:
                                 logger.warning(f"Unknown binary metadata kind: {metadata.kind}")
                         else:
@@ -1384,17 +1142,17 @@ class WsInputSessionDelegate(ClientSessionDelegate):
 
     async def _ws_text_output_task(self):
         """
-        发送任务 - 发送文本回显
+        Send task: text echoes
 
-        处理两种文本输出：
-        - HUMAN_TEXT: 引擎返回的是全量文本（human_text_end=True），以全量模式发送
-        - AVATAR_TEXT: 引擎返回的是增量文本（avatar_text_end=False/True），以增量模式发送
+        Two kinds of text:
+        - HUMAN_TEXT: the engine sends full text (human_text_end=True); sent as full_text
+        - AVATAR_TEXT: the engine sends increments (avatar_text_end=False/True); sent as increment
         """
         logger.info(f"Text output task started for session {self.session_id}")
 
         while not self.quit.is_set():
             try:
-                # 获取文本数据 (ASR 或 LLM 输出)
+                # Text from ASR or the LLM
                 chat_data = await asyncio.wait_for(
                     self.get_data(EngineChannelType.TEXT),
                     timeout=0.1
@@ -1403,20 +1161,19 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                 if chat_data is None:
                     continue
 
-                # 提取文本内容和元数据
+                # Text and metadata
                 text = chat_data.data.get_main_data()
 
                 stream_key_str = chat_data.stream_id.stream_key_str if chat_data.stream_id else None
 
-                # 根据类型发送不同的回显消息
+                # Echo it by type
                 if chat_data.type == ChatDataType.HUMAN_TEXT:
                     if "human_text" not in self.subscriptions:
                         continue
-                    # HUMAN_TEXT: 引擎发来的是全量文本
-                    # 获取 human_text_end 标记（默认 True）
+                    # HUMAN_TEXT: full text from the engine
                     text_end = chat_data.is_last_data
 
-                    # 收集附加元数据（统一处理）
+                    # Extra metadata
                     stream_metadata = self._extract_stream_metadata(
                         chat_data,
                         excluded_keys={'human_text_end'}
@@ -1426,7 +1183,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                         header=MessageHeader(name="EchoHumanText", request_id=str(uuid4())),
                         payload=EchoTextPayload(
                             stream_key=stream_key_str,
-                            mode="full_text",  # HUMAN_TEXT 始终是全量
+                            mode="full_text",  # HUMAN_TEXT is always full text
                             text=text,
                             end_of_speech=text_end,
                             metadata=stream_metadata,
@@ -1439,11 +1196,10 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                 elif chat_data.type == ChatDataType.AVATAR_TEXT:
                     if "avatar_text" not in self.subscriptions:
                         continue
-                    # AVATAR_TEXT: 引擎发来的是增量文本
-                    # 获取 avatar_text_end 标记（默认 False）
+                    # AVATAR_TEXT: increments from the engine
                     text_end = chat_data.is_last_data
 
-                    # 收集附加元数据（统一处理）
+                    # Extra metadata
                     stream_metadata = self._extract_stream_metadata(
                         chat_data,
                         excluded_keys={'avatar_text_end'}
@@ -1453,7 +1209,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
                         header=MessageHeader(name="EchoAvatarText", request_id=str(uuid4())),
                         payload=EchoTextPayload(
                             stream_key=stream_key_str,
-                            mode="increment",  # AVATAR_TEXT 始终是增量
+                            mode="increment",  # AVATAR_TEXT is always incremental
                             text=text,
                             end_of_speech=text_end,
                             metadata=stream_metadata,
@@ -1471,7 +1227,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
         logger.info(f"Text output task ended for session {self.session_id}")
 
     async def _ws_motion_output_task(self):
-        """输出任务 - 发送 Motion Data"""
+        """Output task: motion data"""
         logger.info(f"Motion output task started for session {self.session_id}")
 
         while not self.quit.is_set():
@@ -1503,14 +1259,14 @@ class WsInputSessionDelegate(ClientSessionDelegate):
         logger.info(f"Motion output task ended for session {self.session_id}")
 
     async def _heartbeat_monitor_task(self, connection_info: ConnectionInfo):
-        """心跳监控任务"""
+        """Heartbeat monitor"""
         logger.info(f"Heartbeat monitor started for session {self.session_id}, role={connection_info.role}")
 
         while not connection_info.quit.is_set() and not self.quit.is_set():
             try:
                 await asyncio.sleep(1.0)
 
-                # 检查心跳超时
+                # Heartbeat timeout?
                 elapsed = time.time() - connection_info.last_heartbeat_time
                 if elapsed > self.heartbeat_timeout:
                     logger.warning(
@@ -1533,7 +1289,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
         logger.info("Heartbeat monitor ended")
 
     async def _ws_audio_output_task(self):
-        """输出任务 - 发送 Avatar 音频"""
+        """Output task: avatar audio"""
         logger.info(f"Audio output task started for session {self.session_id}")
 
         while not self.quit.is_set():
@@ -1562,7 +1318,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
 
     async def _ws_signal_output_task(self):
         """
-        发送信号 - 发送服务端信号到客户端
+        Send task: server signals to the client
         """
         logger.info(f"Signal output task started for session {self.session_id}")
 
@@ -1624,7 +1380,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
         logger.info(f"Signal output task ended for session {self.session_id}")
 
     async def serve_websocket(self, websocket: WebSocket) -> bool:
-        """服务 WebSocket 连接，返回是否需要销毁整个 Session"""
+        """Serve a WebSocket connection; returns True if the whole session should be destroyed"""
         info = await self._register_connection(websocket)
         logger.info(f"Serving WebSocket connection role={info.role}, session={self.session_id}")
 
@@ -1635,21 +1391,19 @@ class WsInputSessionDelegate(ClientSessionDelegate):
             return False
 
     async def _serve_primary_connection(self, info: ConnectionInfo) -> bool:
-        """启动主连接任务，结束时返回 True 用于销毁 Session"""
+        """Run the primary connection's tasks; returns True so the session is destroyed"""
 
-        # 重置状态
+        # Reset state
         self.quit.clear()
         self.motion_welcome_sent = False
         self.motion_welcome_payload = None
         self.binary_stream_assembler.clear()
         self.subscriptions = set(self.AVAILABLE_SUBSCRIPTIONS)
 
-        # 重置音频配置
+        # Reset the audio config
         self.audio_format = "PCM"
         self.audio_sample_rate = 16000
         self.audio_channels = 1
-        self._opus_encoder = None
-        self._opus_decoder = None
 
         self.primary_tasks = [
             asyncio.create_task(self._ws_input_task(info)),
@@ -1661,13 +1415,13 @@ class WsInputSessionDelegate(ClientSessionDelegate):
         ]
 
         try:
-            # 等待任意任务结束
+            # Wait for any task to finish
             done, pending = await asyncio.wait(
                 self.primary_tasks,
                 return_when=asyncio.FIRST_COMPLETED
             )
 
-            # 取消其他任务
+            # Cancel the others
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
@@ -1687,7 +1441,7 @@ class WsInputSessionDelegate(ClientSessionDelegate):
         return True
 
     async def _serve_listener_connection(self, info: ConnectionInfo):
-        """启动监听连接任务"""
+        """Run a listener connection's tasks"""
         tasks = [
             asyncio.create_task(self._ws_input_task(info)),
             asyncio.create_task(self._heartbeat_monitor_task(info))
